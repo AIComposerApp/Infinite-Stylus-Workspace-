@@ -74,10 +74,17 @@
    ```bash
    cp .env.example .env.local
    ```
-   Add your Gemini API Key:
+   Add your environment variables:
    ```env
    GEMINI_API_KEY="your-gemini-api-key"
+   APP_URL="https://your-project.vercel.app" # Or http://localhost:3000 for local dev
    ```
+
+### Deploying to Vercel
+
+When importing the project into Vercel:
+- **`GEMINI_API_KEY`**: Your Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+- **`APP_URL`**: Set to your Vercel project domain (e.g. `https://your-project.vercel.app`). Note: The canvas and API use relative paths (`/api/gemini/assist`), so this is an informational host reference. If Vercel prompts for it during setup, you can enter `https://your-project.vercel.app` or `http://localhost:3000`.
 
 4. Run the development server:
    ```bash

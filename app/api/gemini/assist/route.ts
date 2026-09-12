@@ -51,26 +51,55 @@ async function generateWithFallback(options: {
   throw lastError || new Error("All candidate models temporarily unavailable");
 }
 
+// Helper to rigorously clean output of any markdown formatting (asterisks, bullet dashes, hashtags, backticks)
+function cleanHandwritingOutput(raw: string): string {
+  if (!raw) return "";
+
+  let cleaned = raw
+    // Strip bold/italic markdown like **bold**, *italic*, __bold__, _italic_
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    // Strip bullet dashes, asterisks, pluses or bullet points at the start of lines
+    .replace(/^[\s]*[-*+•]\s+/gm, "")
+    // Strip numbered list markers at start of lines
+    .replace(/^[\s]*\d+[\.\)]\s+/gm, "")
+    // Strip markdown headers like ### Header
+    .replace(/^[\s]*#+\s+/gm, "")
+    // Strip blockquotes and backticks
+    .replace(/^[\s]*>\s+/gm, "")
+    .replace(/[`~]/g, "")
+    // Remove any remaining stray asterisks or dashes used as decorations
+    .replace(/\*/g, "")
+    .replace(/^--+\s*/gm, "")
+    // Normalize newlines (no more than two consecutive)
+    .replace(/(\r\n|\r|\n){3,}/g, "\n\n")
+    .trim();
+
+  return cleaned;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { prompt, canvasContext, imageBase64 } = body;
+    const { prompt, canvasContext, conversationHistory, imageBase64 } = body;
 
-    if (!prompt && !imageBase64) {
+    if (!prompt && !imageBase64 && (!conversationHistory || conversationHistory.length === 0)) {
       return NextResponse.json(
-        { error: "Prompt or image is required" },
+        { error: "Prompt, context, or conversation history is required" },
         { status: 400 }
       );
     }
 
-    const systemInstruction = `You are the user's inner self and organic thought-flow brainstorming partner writing directly onto their personal infinite stylus note canvas.
-CRITICAL RULES:
-1. NEVER talk like a chatbot. DO NOT say "Sure!", "Here is what you need", "I hope this helps", or "As an AI".
-2. Respond in first-person or direct natural handwriting style — concise, deeply insightful, poetic, analytical, or structured depending on what the user wrote.
-3. Keep the response tightly scoped to the user's handwritten prompt and surrounding context.
-4. Keep the output formatted as natural thought notes, concise sentences, bullets, or short brainstorm snippets (1 to 4 sentences or concise punchy lines) suitable for handwritten canvas placement.
-5. If the user asked a question, answer it directly and incisively.
-6. If the user wrote an incomplete thought or idea, organically continue or expand on it.`;
+    const systemInstruction = `You are the user's conversational brainstorming companion writing handwritten ink thoughts directly onto their infinite stylus canvas.
+STRICT FORMATTING AND TONE MANDATES:
+1. NEVER use Markdown syntax. Absolutely DO NOT include asterisks (* or **), bullet dashes (-), numbered list markers (1.), hashtags (#), backticks, or bracketed labels.
+2. Write in clean, fluid, natural human sentences and paragraphs — exactly as a thoughtful partner writes handwritten ink notes in a journal.
+3. Keep the tone conversational, reflective, incisive, and engaging.
+4. Keep the length concise and readable (2 to 4 fluid sentences per response). Do not dump a wall of text.
+5. NEVER sound like a generic chatbot or AI assistant. NEVER say "Certainly!", "Sure thing", "Here are some ideas", "I hope this helps", or "As an AI".
+6. Engage in a real back-and-forth conversation. Answer questions, offer creative counter-perspectives, and ask provocative handwritten questions that invite the user to write back.`;
 
     let contents: any;
     if (imageBase64) {
@@ -83,17 +112,26 @@ CRITICAL RULES:
           },
         },
         {
-          text: `Handwritten context from user's stylus canvas:\nUser wrote: "${prompt || "Assistant, please continue or respond to this idea."}"\nCanvas surrounding notes context: ${canvasContext || "None"}\nProvide your direct inner-voice response to be written on the board.`,
+          text: `Handwritten context from user's stylus canvas:\nUser wrote: "${prompt || "Assistant, please continue our conversation."}"\nCanvas surrounding context: ${canvasContext || "None"}\nWrite your natural handwritten conversational response.`,
         },
       ];
+    } else if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+      const historyDialogue = conversationHistory
+        .map((turn: { prompt?: string; response?: string }, idx: number) => 
+          `Turn ${idx + 1}:\nUser: ${turn.prompt || "Notes on canvas"}\nYour handwritten thought: ${turn.response || ""}`
+        )
+        .join("\n\n");
+
+      contents = `Ongoing dialogue on canvas:\n${historyDialogue}\n\nLatest user note / response: "${prompt || "Continue the conversation"}"\nCanvas surroundings: "${canvasContext || ""}"\nProvide the next natural conversational handwritten response.`;
     } else {
-      contents = `User notes / query: "${prompt}"\nContext of current canvas thoughts: "${canvasContext || "Brainstorming canvas"}"`;
+      contents = `User notes / query: "${prompt}"\nContext of canvas notes: "${canvasContext || "Brainstorming canvas"}"\nProvide a natural handwritten response.`;
     }
 
     const result = await generateWithFallback({ contents, systemInstruction });
+    const sanitizedText = cleanHandwritingOutput(result.text);
 
     return NextResponse.json({
-      text: result.text,
+      text: sanitizedText || result.text,
       model: result.modelUsed,
     });
   } catch (error: any) {
@@ -101,7 +139,7 @@ CRITICAL RULES:
     // Provide an organic thought fallback so the canvas and thought bubble never break or lock up
     return NextResponse.json(
       {
-        text: "Exploring this further: focus on core mechanics, frictionless flow, and organic tactile clarity.",
+        text: "Exploring this further: focus on core mechanics, frictionless flow, and tactile clarity.",
         fallback: true,
         error: error?.message || "Service temporarily busy, used contextual thought continuation",
       },

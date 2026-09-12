@@ -23,6 +23,13 @@ export interface Stroke {
   };
 }
 
+export interface ThoughtSentenceLine {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+}
+
 export interface ThoughtSentence {
   id: string;
   text: string;
@@ -31,6 +38,7 @@ export interface ThoughtSentence {
   width: number;
   height: number;
   lineIndex: number;
+  lines?: ThoughtSentenceLine[];
 }
 
 export interface AIThought {
@@ -46,6 +54,7 @@ export interface AIThought {
   fontFamily: string;
   createdAt: number;
   lastUpdated: number;
+  writingStartTime?: number;
   bounds: {
     minX: number;
     minY: number;

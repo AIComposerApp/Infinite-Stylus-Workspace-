@@ -28,6 +28,8 @@ import { ThoughtBubbleOffScreen } from '@/components/ThoughtBubbleOffScreen';
 import { ProjectsDrawer } from '@/components/ProjectsDrawer';
 import { TopToast } from '@/components/TopToast';
 import { SentenceCopyOverlay } from '@/components/SentenceCopyOverlay';
+import { ConversationalAssistantBar } from '@/components/ConversationalAssistantBar';
+import { PenTool, ShieldCheck, Hand } from 'lucide-react';
 
 const subscribeOnline = (callback: () => void) => {
   if (typeof window === 'undefined') return () => {};
@@ -155,8 +157,16 @@ export const InfiniteStylusCanvas: React.FC = () => {
     initialViewport: Viewport;
   } | null>(null);
 
+  // Samsung S-Pen & Stylus Digitizer Integration with Palm Rejection
+  const [isStylusDetected, setIsStylusDetected] = useState<boolean>(false);
+  const [isPalmRejectionActive, setIsPalmRejectionActive] = useState<boolean>(true);
+  const isPenInContactRef = useRef<boolean>(false);
+  const lastPenTimeRef = useRef<number>(0);
+  const isStylusEraserRef = useRef<boolean>(false);
+
   // Assistant & Off-Screen Thought Bubble State
   const [activeThoughtId, setActiveThoughtId] = useState<string | null>(null);
+  const [isConversationalActive, setIsConversationalActive] = useState<boolean>(false);
 
   // Screen dimensions for off-screen bubble calculation
   const [windowDimensions, setWindowDimensions] = useState<{ width: number; height: number }>({
@@ -427,12 +437,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
   }, [history, historyIndex]);
 
-  // Convert Screen coordinate to Canvas Coordinate
+  // Convert Screen coordinate to Canvas Coordinate with accurate sub-pixel getBoundingClientRect
   const screenToCanvas = useCallback(
     (screenX: number, screenY: number): Point => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return {
+          x: (screenX - viewport.x) / viewport.zoom,
+          y: (screenY - viewport.y) / viewport.zoom,
+        };
+      }
+      const rect = canvas.getBoundingClientRect();
       return {
-        x: (screenX - viewport.x) / viewport.zoom,
-        y: (screenY - viewport.y) / viewport.zoom,
+        x: (screenX - rect.left - viewport.x) / viewport.zoom,
+        y: (screenY - rect.top - viewport.y) / viewport.zoom,
       };
     },
     [viewport]
@@ -451,7 +469,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }));
   }, [offScreenBubble]);
 
-  // Trigger AI Assistant (Brainstorm response in organic handwriting)
+  // Trigger AI Assistant (Brainstorm response in organic handwriting with sequential readable fade-in)
   const triggerAssistantResponse = useCallback(
     async (targetPoint?: { x: number; y: number }, customPrompt?: string) => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -463,24 +481,39 @@ export const InfiniteStylusCanvas: React.FC = () => {
       let spawnY = targetPoint?.y ?? 0;
 
       if (!targetPoint) {
-        if (strokes.length > 0) {
-          const lastStroke = strokes[strokes.length - 1];
+        const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
+        if (completedThoughts.length > 0) {
+          const lastThought = completedThoughts[completedThoughts.length - 1];
+          spawnX = lastThought.x;
+          spawnY = lastThought.bounds.maxY + 36;
+        } else if (strokesRef.current.length > 0) {
+          const lastStroke = strokesRef.current[strokesRef.current.length - 1];
           spawnX = lastStroke.bounds.minX;
-          spawnY = lastStroke.bounds.maxY + 40;
+          spawnY = lastStroke.bounds.maxY + 36;
         } else {
           const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
-          spawnX = center.x - 100;
-          spawnY = center.y;
+          spawnX = center.x - 120;
+          spawnY = center.y - 40;
         }
       }
 
-      const thoughtId = `thought-${Date.now()}`;
+      // Smoothly pan canvas to keep newly writing thought within comfortable view
+      const currentViewport = viewportRef.current;
+      const screenY = spawnY * currentViewport.zoom + currentViewport.y;
+      if (screenY > window.innerHeight - 220 || screenY < 80) {
+        setViewport((prev) => ({
+          ...prev,
+          y: Math.min(prev.y, window.innerHeight * 0.45 - spawnY * prev.zoom),
+        }));
+      }
+
+      const thoughtId = `thought-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const newThought: AIThought = {
         id: thoughtId,
         x: spawnX,
         y: spawnY,
         status: 'thinking',
-        prompt: customPrompt || 'Assistant continuing user thoughts...',
+        prompt: customPrompt || 'Assistant continuing dialogue...',
         text: '',
         sentences: [],
         revealedCount: 0,
@@ -488,87 +521,120 @@ export const InfiniteStylusCanvas: React.FC = () => {
         fontFamily: 'Kalam',
         createdAt: Date.now(),
         lastUpdated: Date.now(),
-        bounds: { minX: spawnX, minY: spawnY, maxX: spawnX + 100, maxY: spawnY + 40 },
+        bounds: { minX: spawnX, minY: spawnY, maxX: spawnX + 160, maxY: spawnY + 40 },
       };
 
-      const nextThoughts = [...thoughts, newThought];
-      setThoughts(nextThoughts);
+      setThoughts((prev) => [...prev, newThought]);
       setActiveThoughtId(thoughtId);
-      showToast('Assistant writing...');
+      showToast('Assistant writing in ink...');
 
-      const contextSnippet = thoughts.map((t) => t.text).join(' \n ');
+      // Gather ongoing conversation history so back-and-forth context is preserved
+      const conversationHistory = thoughtsRef.current
+        .filter((t) => t.text && t.text.trim())
+        .map((t) => ({
+          prompt: t.prompt,
+          response: t.text,
+        }));
+      const contextSnippet = thoughtsRef.current.map((t) => t.text).join(' \n ');
 
       try {
         const res = await fetch('/api/gemini/assist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: customPrompt || 'Expand on my current thoughts and continue organic brainstorming notes.',
+            prompt: customPrompt || (conversationHistory.length > 0 ? 'Continue our conversational thread.' : 'Expand on my current thoughts and continue organic brainstorming notes.'),
             canvasContext: contextSnippet,
+            conversationHistory,
           }),
         });
 
         const data = await res.json();
-        const textResult = data.text || data.fallbackText || 'Exploring organic connections and fluid visual notes.';
+        const textResult = data.text || data.fallbackText || 'Continuing this thread: explore core structures, intuitive flow, and organic tactile clarity.';
 
         const layout = layoutHandwrittenText(textResult, spawnX, spawnY);
+        const writingStartTime = Date.now();
 
         setThoughts((prev) =>
           prev.map((t) =>
             t.id === thoughtId
               ? {
                   ...t,
-                  status: 'writing',
+                  status: 'writing' as const,
                   text: textResult,
                   sentences: layout.sentences,
                   bounds: layout.totalBounds,
-                  revealedCount: 0,
+                  revealedCount: textResult.length,
+                  writingStartTime,
                 }
               : t
           )
         );
 
-        let currentRevealed = 0;
-        const totalChars = textResult.length;
-        const revealInterval = setInterval(() => {
-          currentRevealed += 3;
-          if (currentRevealed >= totalChars) {
-            clearInterval(revealInterval);
-            const finishedThoughts = nextThoughts.map((t) =>
-              t.id === thoughtId ? { ...t, status: 'completed' as const, revealedCount: totalChars } : t
+        // Sequential fade-in timing: sentences smoothly reveal one by one over ~900ms per sentence
+        const totalWritingDuration = Math.max(1400, (layout.sentences.length - 1) * 900 + 750);
+        setTimeout(() => {
+          setThoughts((prev) => {
+            const updated = prev.map((t) =>
+              t.id === thoughtId ? { ...t, status: 'completed' as const } : t
             );
-            setThoughts(finishedThoughts);
-            pushHistory(strokes, finishedThoughts);
-          } else {
-            setThoughts((prev) =>
-              prev.map((t) =>
-                t.id === thoughtId ? { ...t, revealedCount: currentRevealed } : t
-              )
-            );
-          }
-        }, 30);
+            pushHistory(strokesRef.current, updated);
+            return updated;
+          });
+        }, totalWritingDuration);
       } catch (err) {
         console.error('AI assistant error:', err);
-        const fallbackText = 'Connecting concepts: tactile feedback, infinite scale, and offline resilience.';
+        const fallbackText = 'Connecting ideas: tactile feedback, infinite scale, and seamless continuity.';
         const fallbackLayout = layoutHandwrittenText(fallbackText, spawnX, spawnY);
-        const fallbackThoughts = nextThoughts.map((t) =>
-          t.id === thoughtId
-            ? {
-                ...t,
-                status: 'completed' as const,
-                text: fallbackText,
-                sentences: fallbackLayout.sentences,
-                bounds: fallbackLayout.totalBounds,
-                revealedCount: fallbackText.length,
-              }
-            : t
+        const writingStartTime = Date.now();
+
+        setThoughts((prev) =>
+          prev.map((t) =>
+            t.id === thoughtId
+              ? {
+                  ...t,
+                  status: 'writing' as const,
+                  text: fallbackText,
+                  sentences: fallbackLayout.sentences,
+                  bounds: fallbackLayout.totalBounds,
+                  revealedCount: fallbackText.length,
+                  writingStartTime,
+                }
+              : t
+          )
         );
-        setThoughts(fallbackThoughts);
-        pushHistory(strokes, fallbackThoughts);
+
+        setTimeout(() => {
+          setThoughts((prev) => {
+            const updated = prev.map((t) =>
+              t.id === thoughtId ? { ...t, status: 'completed' as const } : t
+            );
+            pushHistory(strokesRef.current, updated);
+            return updated;
+          });
+        }, 1500);
       }
     },
-    [strokes, thoughts, currentColor, screenToCanvas, showToast, pushHistory]
+    [currentColor, screenToCanvas, showToast, pushHistory]
   );
+
+  // Toggle Conversational Flow Mode
+  const handleToggleConversational = useCallback(() => {
+    setIsConversationalActive((prev) => {
+      const next = !prev;
+      if (next) {
+        showToast('Conversational Mode: Active. Write notes or reply to continue.');
+        const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
+        if (completedThoughts.length === 0 && strokesRef.current.length === 0) {
+          triggerAssistantResponse(undefined, 'Ready to brainstorm together. Write or sketch on the canvas, or ask anything to begin.');
+        } else if (strokesRef.current.length > 0) {
+          triggerAssistantResponse(undefined, 'Respond to and continue my handwritten notes on the canvas.');
+        }
+      } else {
+        showToast('Conversation paused. All thoughts and notes are saved.');
+      }
+      return next;
+    });
+  }, [showToast, triggerAssistantResponse]);
 
   // Double-tap or Click Detection to select sentence
   const handleSentenceSelectAtCanvasPoint = useCallback(
@@ -624,7 +690,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    // Request low-latency direct-to-front-buffer context for Android & Samsung S-Pen
+    const ctx =
+      (canvas.getContext('2d', {
+        desynchronized: true,
+        alpha: false,
+      }) as CanvasRenderingContext2D | null) || canvas.getContext('2d');
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
@@ -668,16 +739,32 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     // 2. Draw Currently Active Drawing Stroke
     if (isDrawingRef.current && currentStrokeRef.current.length > 0) {
+      const effectiveTool = isStylusEraserRef.current ? 'eraser' : currentTool;
       const activeStroke: Stroke = {
         id: 'active',
         points: currentStrokeRef.current,
         color: currentColor,
         width: strokeWidth,
-        tool: currentTool,
+        tool: effectiveTool,
         timestamp: Date.now(),
         bounds: calculateStrokeBounds(currentStrokeRef.current),
       };
-      drawSmoothStroke(ctx, activeStroke);
+
+      if (effectiveTool === 'eraser') {
+        // Draw active eraser halo at stylus tip
+        const lastP = currentStrokeRef.current[currentStrokeRef.current.length - 1];
+        if (lastP) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.75)';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(lastP.x, lastP.y, 22, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      } else {
+        drawSmoothStroke(ctx, activeStroke);
+      }
     }
 
     // 3. Draw AI Thoughts (Organic Inner-Self Handwriting)
@@ -706,21 +793,41 @@ export const InfiniteStylusCanvas: React.FC = () => {
         ctx.fillStyle = thought.color || '#222222';
         ctx.textBaseline = 'top';
 
-        let charCount = 0;
-        const maxChars = thought.revealedCount ?? thought.text.length;
+        const now = Date.now();
+        const startTime = thought.writingStartTime || thought.createdAt;
 
-        for (const sentence of thought.sentences) {
-          if (charCount >= maxChars) break;
+        for (let sIdx = 0; sIdx < thought.sentences.length; sIdx++) {
+          const sentence = thought.sentences[sIdx];
+          const sentenceDelay = sIdx * 900; // 900ms stagger between sentences for readable, sequential fade-in
+          const elapsed = now - (startTime + sentenceDelay);
 
-          const sliceLength = Math.max(0, maxChars - charCount);
-          const visibleSnippet = sentence.text.slice(0, sliceLength);
+          if (thought.status === 'writing' && elapsed < 0) {
+            // Sequential reveal: sentence has not started fading in yet
+            continue;
+          }
+
+          let alpha = 0.94;
+          let offsetY = 0;
+
+          if (thought.status === 'writing') {
+            const fadeProgress = Math.min(1, Math.max(0, elapsed / 700)); // 700ms smooth fade-in
+            // Smooth ease-out quad
+            const eased = 1 - Math.pow(1 - fadeProgress, 2);
+            alpha = Math.max(0.04, eased * 0.94);
+            offsetY = (1 - eased) * 4; // subtle 4px float into place
+          }
 
           ctx.save();
-          ctx.globalAlpha = 0.94;
-          ctx.fillText(visibleSnippet, sentence.x, sentence.y);
-          ctx.restore();
+          ctx.globalAlpha = alpha;
 
-          charCount += sentence.text.length;
+          if (sentence.lines && sentence.lines.length > 0) {
+            for (const line of sentence.lines) {
+              ctx.fillText(line.text, line.x, line.y + offsetY);
+            }
+          } else {
+            ctx.fillText(sentence.text, sentence.x, sentence.y + offsetY);
+          }
+          ctx.restore();
         }
       }
     }
@@ -739,39 +846,82 @@ export const InfiniteStylusCanvas: React.FC = () => {
     return () => cancelAnimationFrame(animId);
   }, [renderCanvas]);
 
+  // Pointer Enter (Detect S-Pen hover within 15mm above Samsung screen)
+  const handlePointerEnter = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'pen') {
+      if (!isStylusDetected) {
+        setIsStylusDetected(true);
+        showToast('S-Pen detected • Palm Rejection active');
+      }
+      lastPenTimeRef.current = Date.now();
+    }
+  };
+
   // Pointer Down (Stylus Pen, Finger Touch, Mouse)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    // Record this pointer
+    // Suppress default Android gesture navigation or pull-to-refresh
+    if (e.cancelable) e.preventDefault();
+
+    const isStylus = e.pointerType === 'pen';
+    const isTouch = e.pointerType === 'touch';
+
+    if (isStylus) {
+      if (!isStylusDetected) {
+        setIsStylusDetected(true);
+      }
+      isPenInContactRef.current = true;
+      lastPenTimeRef.current = Date.now();
+      // Detect Samsung S-Pen barrel button: button 2 or secondary button pressed
+      isStylusEraserRef.current = (e.buttons & 2) !== 0 || e.button === 2;
+    }
+
+    // STRICT PALM REJECTION:
+    // If an S-Pen is physically in contact, OR hovered/drawn within the last 750ms,
+    // OR if Palm Rejection is active and stylus is detected, completely reject touch input!
+    if (isTouch) {
+      const timeSincePen = Date.now() - lastPenTimeRef.current;
+      if (isPenInContactRef.current || (isPalmRejectionActive && (isStylusDetected || timeSincePen < 750))) {
+        // Discard palm meat contact
+        return;
+      }
+    }
+
+    // Lock pointer capture so Samsung edge-swipe gestures don't abort strokes
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+
+    // Record pointer
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
 
     // Multi-touch two-finger detection (Pinch to scale/reduce & move anywhere)
-    const touchPointers = Array.from(activePointersRef.current.values()).filter((p) => p.type === 'touch');
-    if (touchPointers.length >= 2) {
-      // Two fingers on screen: cancel any in-progress drawing stroke immediately
-      if (isDrawingRef.current) {
-        isDrawingRef.current = false;
-        currentStrokeRef.current = [];
-        activePointerIdRef.current = null;
+    // NEVER allowed if S-Pen is actively drawing!
+    if (!isPenInContactRef.current) {
+      const touchPointers = Array.from(activePointersRef.current.values()).filter((p) => p.type === 'touch');
+      if (touchPointers.length >= 2) {
+        if (isDrawingRef.current) {
+          isDrawingRef.current = false;
+          currentStrokeRef.current = [];
+          activePointerIdRef.current = null;
+        }
+        isPanningRef.current = false;
+
+        const p1 = touchPointers[0];
+        const p2 = touchPointers[1];
+        const initialDistance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const initialMidpoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+
+        twoFingerGestureRef.current = {
+          initialDistance: Math.max(initialDistance, 10),
+          initialZoom: viewportRef.current.zoom,
+          initialMidpoint,
+          initialViewport: { ...viewportRef.current },
+        };
+        return;
       }
-      isPanningRef.current = false;
-
-      const p1 = touchPointers[0];
-      const p2 = touchPointers[1];
-      const initialDistance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      const initialMidpoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-
-      twoFingerGestureRef.current = {
-        initialDistance: Math.max(initialDistance, 10),
-        initialZoom: viewportRef.current.zoom,
-        initialMidpoint,
-        initialViewport: { ...viewportRef.current },
-      };
-      return;
     }
 
-    const isStylus = e.pointerType === 'pen';
     const isMiddleOrRight = e.button === 1 || e.button === 2;
-
     const screenX = e.clientX;
     const screenY = e.clientY;
     const canvasPos = screenToCanvas(screenX, screenY);
@@ -795,11 +945,24 @@ export const InfiniteStylusCanvas: React.FC = () => {
       return;
     }
 
-    // Start drawing (with stylus or single finger)
+    // If Palm Rejection is active and stylus is detected, single finger touches pan the canvas instead of drawing
+    if (isTouch && isPalmRejectionActive && isStylusDetected) {
+      isPanningRef.current = true;
+      lastPanPointRef.current = { x: screenX, y: screenY };
+      return;
+    }
+
+    // Start drawing (with stylus or touch)
     isDrawingRef.current = true;
     activePointerIdRef.current = e.pointerId;
 
-    const pressure = isStylus ? e.pressure || 0.5 : 0.5;
+    const pressure =
+      isStylus && typeof e.pressure === 'number' && e.pressure > 0
+        ? e.pressure
+        : isStylus
+        ? 0.45
+        : 0.5;
+
     currentStrokeRef.current = [
       {
         x: canvasPos.x,
@@ -810,40 +973,61 @@ export const InfiniteStylusCanvas: React.FC = () => {
     ];
   };
 
-  // Pointer Move
+  // Pointer Move (with 120Hz-240Hz Coalesced Events from S-Pen Digitizer)
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    // Update pointer position
+    if (e.cancelable) e.preventDefault();
+
+    const isStylus = e.pointerType === 'pen';
+    const isTouch = e.pointerType === 'touch';
+
+    if (isStylus) {
+      if (!isStylusDetected) setIsStylusDetected(true);
+      lastPenTimeRef.current = Date.now();
+      if ((e.buttons & 2) !== 0 || e.button === 2) {
+        isStylusEraserRef.current = true;
+      }
+    }
+
+    // Palm rejection on pointermove: ignore palm meat
+    if (isTouch) {
+      const timeSincePen = Date.now() - lastPenTimeRef.current;
+      if (isPenInContactRef.current || (isPalmRejectionActive && (isStylusDetected || timeSincePen < 750))) {
+        return;
+      }
+    }
+
+    // Update active pointers position
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
 
-    // Handle two-finger pinch-to-scale and move anywhere
-    const touchPointers = Array.from(activePointersRef.current.values()).filter((p) => p.type === 'touch');
-    if (touchPointers.length >= 2 && twoFingerGestureRef.current) {
-      const p1 = touchPointers[0];
-      const p2 = touchPointers[1];
-      const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      const currentMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    // Handle two-finger pinch-to-scale and move anywhere (only when pen is not in contact)
+    if (!isPenInContactRef.current) {
+      const touchPointers = Array.from(activePointersRef.current.values()).filter((p) => p.type === 'touch');
+      if (touchPointers.length >= 2 && twoFingerGestureRef.current) {
+        const p1 = touchPointers[0];
+        const p2 = touchPointers[1];
+        const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const currentMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
 
-      const { initialDistance, initialZoom, initialMidpoint, initialViewport } = twoFingerGestureRef.current;
-      const scaleRatio = currentDist / initialDistance;
-      const newZoom = Math.min(4.5, Math.max(0.18, initialZoom * scaleRatio));
+        const { initialDistance, initialZoom, initialMidpoint, initialViewport } = twoFingerGestureRef.current;
+        const scaleRatio = currentDist / initialDistance;
+        const newZoom = Math.min(4.5, Math.max(0.18, initialZoom * scaleRatio));
 
-      // Focal point on canvas
-      const focalCanvasX = (initialMidpoint.x - initialViewport.x) / initialViewport.zoom;
-      const focalCanvasY = (initialMidpoint.y - initialViewport.y) / initialViewport.zoom;
+        const focalCanvasX = (initialMidpoint.x - initialViewport.x) / initialViewport.zoom;
+        const focalCanvasY = (initialMidpoint.y - initialViewport.y) / initialViewport.zoom;
 
-      // Two-finger pan translation delta
-      const panDx = currentMid.x - initialMidpoint.x;
-      const panDy = currentMid.y - initialMidpoint.y;
+        const panDx = currentMid.x - initialMidpoint.x;
+        const panDy = currentMid.y - initialMidpoint.y;
 
-      const updatedViewport: Viewport = {
-        zoom: newZoom,
-        x: initialMidpoint.x + panDx - focalCanvasX * newZoom,
-        y: initialMidpoint.y + panDy - focalCanvasY * newZoom,
-      };
+        const updatedViewport: Viewport = {
+          zoom: newZoom,
+          x: initialMidpoint.x + panDx - focalCanvasX * newZoom,
+          y: initialMidpoint.y + panDy - focalCanvasY * newZoom,
+        };
 
-      setViewport(updatedViewport);
-      viewportRef.current = updatedViewport;
-      return;
+        setViewport(updatedViewport);
+        viewportRef.current = updatedViewport;
+        return;
+      }
     }
 
     const screenX = e.clientX;
@@ -862,24 +1046,64 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
 
     if (isDrawingRef.current && activePointerIdRef.current === e.pointerId) {
-      const isStylus = e.pointerType === 'pen';
-      const pressure = isStylus ? e.pressure || 0.5 : 0.5;
-      const canvasPos = screenToCanvas(screenX, screenY);
+      // Extract high-rate hardware digitizer points via getCoalescedEvents
+      const rawEvents: Array<{ clientX: number; clientY: number; pressure?: number; timeStamp?: number }> =
+        typeof (e.nativeEvent as any)?.getCoalescedEvents === 'function'
+          ? (e.nativeEvent as any).getCoalescedEvents()
+          : [e.nativeEvent || e];
 
-      currentStrokeRef.current.push({
-        x: canvasPos.x,
-        y: canvasPos.y,
-        pressure,
-        time: Date.now(),
-      });
+      const effectiveTool = isStylusEraserRef.current ? 'eraser' : currentTool;
+
+      for (const ev of rawEvents) {
+        const pRaw =
+          typeof ev.pressure === 'number' && ev.pressure > 0
+            ? ev.pressure
+            : isStylus
+            ? 0.45
+            : 0.5;
+        const cPos = screenToCanvas(ev.clientX, ev.clientY);
+
+        currentStrokeRef.current.push({
+          x: cPos.x,
+          y: cPos.y,
+          pressure: pRaw,
+          time: ev.timeStamp || Date.now(),
+        });
+
+        // Real-time erasure when using eraser tool or pressing S-Pen button
+        if (effectiveTool === 'eraser') {
+          const eraserRadius = 22;
+          setStrokes((prev) =>
+            prev.filter(
+              (s) =>
+                !(
+                  cPos.x >= s.bounds.minX - eraserRadius &&
+                  cPos.x <= s.bounds.maxX + eraserRadius &&
+                  cPos.y >= s.bounds.minY - eraserRadius &&
+                  cPos.y <= s.bounds.maxY + eraserRadius
+                )
+            )
+          );
+        }
+      }
     }
   };
 
-  // Pointer Up
+  // Pointer Up & Pointer Cancel
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     activePointersRef.current.delete(e.pointerId);
 
-    // If active touch pointers drop below 2, end two-finger gesture
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (_) {}
+
+    if (e.pointerType === 'pen') {
+      isPenInContactRef.current = false;
+      lastPenTimeRef.current = Date.now();
+    }
+
     const touchPointers = Array.from(activePointersRef.current.values()).filter((p) => p.type === 'touch');
     if (touchPointers.length < 2) {
       twoFingerGestureRef.current = null;
@@ -894,10 +1118,13 @@ export const InfiniteStylusCanvas: React.FC = () => {
       isDrawingRef.current = false;
       activePointerIdRef.current = null;
 
+      const effectiveTool = isStylusEraserRef.current ? 'eraser' : currentTool;
+      isStylusEraserRef.current = false;
+
       const points = currentStrokeRef.current;
       if (points.length > 0) {
-        if (currentTool === 'eraser') {
-          const eraserRadius = 18;
+        if (effectiveTool === 'eraser') {
+          const eraserRadius = 22;
           setStrokes((prev) => {
             const filtered = prev.filter((s) => {
               for (const p of points) {
@@ -912,7 +1139,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
               }
               return true;
             });
-            pushHistory(filtered, thoughts);
+            pushHistory(filtered, thoughtsRef.current);
             return filtered;
           });
         } else {
@@ -921,14 +1148,14 @@ export const InfiniteStylusCanvas: React.FC = () => {
             points: [...points],
             color: currentColor,
             width: strokeWidth,
-            tool: currentTool,
+            tool: effectiveTool,
             timestamp: Date.now(),
             bounds: calculateStrokeBounds(points),
           };
 
           const nextStrokes = [...strokes, newStroke];
           setStrokes(nextStrokes);
-          pushHistory(nextStrokes, thoughts);
+          pushHistory(nextStrokes, thoughtsRef.current);
         }
       }
 
@@ -1003,6 +1230,62 @@ export const InfiniteStylusCanvas: React.FC = () => {
       {/* Top Notification Toast */}
       <TopToast message={toastMessage} />
 
+      {/* S-Pen / Stylus Palm Rejection Mode Badge (Optimized for Samsung & Stylus Screens) */}
+      <div className="fixed top-3 left-3 z-30 flex items-center gap-2 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => {
+            setIsPalmRejectionActive((prev) => {
+              const next = !prev;
+              showToast(
+                next
+                  ? 'Palm Rejection: ON (Only S-Pen draws, palm ignored)'
+                  : 'Palm Rejection: OFF (Finger + Stylus both draw)'
+              );
+              return next;
+            });
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium backdrop-blur-md transition-all shadow-sm select-none border active:scale-95 ${
+            isStylusDetected
+              ? isPalmRejectionActive
+                ? 'bg-neutral-900/90 text-white border-neutral-700/60 shadow-[0_2px_10px_rgba(0,0,0,0.18)]'
+                : 'bg-white/90 text-neutral-700 border-neutral-200/80 hover:bg-white'
+              : isPalmRejectionActive
+              ? 'bg-white/90 text-neutral-700 border-neutral-200/80 hover:bg-white'
+              : 'bg-white/70 text-neutral-400 border-neutral-200/60'
+          }`}
+          title="Toggle Palm Rejection mode"
+        >
+          {isStylusDetected ? (
+            isPalmRejectionActive ? (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Hand className="w-3.5 h-3.5 text-amber-500" />
+            )
+          ) : (
+            <PenTool className="w-3.5 h-3.5 text-neutral-500" />
+          )}
+          <span>
+            {isStylusDetected
+              ? isPalmRejectionActive
+                ? 'S-Pen • Palm Rejection ON'
+                : 'S-Pen • Touch Draw ON'
+              : isPalmRejectionActive
+              ? 'Stylus Mode (Palm Reject)'
+              : 'Touch + Pen Mode'}
+          </span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              isStylusDetected
+                ? isPalmRejectionActive
+                  ? 'bg-emerald-400 animate-pulse'
+                  : 'bg-amber-400'
+                : 'bg-neutral-300'
+            }`}
+          />
+        </button>
+      </div>
+
       {/* Infinite Canvas */}
       <canvas
         id="infinite-stylus-canvas"
@@ -1011,8 +1294,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerUp}
+        onContextMenu={(e) => e.preventDefault()}
         onWheel={handleWheel}
-        className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+        className="absolute inset-0 w-full h-full cursor-crosshair touch-none select-none"
         style={{ touchAction: 'none' }}
       />
 
@@ -1032,6 +1318,19 @@ export const InfiniteStylusCanvas: React.FC = () => {
         screenY={offScreenBubble.screenY}
         angleRad={offScreenBubble.angleRad}
         onFocusThought={handleFocusThought}
+      />
+
+      {/* Conversational Mode Floating Bar */}
+      <ConversationalAssistantBar
+        isActive={isConversationalActive}
+        isThinking={thoughts.some((t) => t.status === 'thinking')}
+        onSend={(msg) => triggerAssistantResponse(undefined, msg)}
+        onClose={() => {
+          setIsConversationalActive(false);
+          showToast('Conversation ended. All thoughts saved.');
+        }}
+        hasCanvasInk={strokes.length > 0}
+        onRespondToInk={() => triggerAssistantResponse(undefined, 'Respond to and continue my handwritten notes on the canvas.')}
       />
 
       {/* Liquid Bottom Dock (Draggable in any direction, swipeable tools) */}
@@ -1059,7 +1358,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
           a.click();
           showToast('PNG Exported');
         }}
-        onTriggerAssistant={() => triggerAssistantResponse()}
+        onTriggerAssistant={handleToggleConversational}
+        isConversationalActive={isConversationalActive}
         isAssistantThinking={thoughts.some((t) => t.status === 'thinking')}
         isOffline={isOffline}
       />

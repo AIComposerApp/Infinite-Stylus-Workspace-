@@ -41,6 +41,7 @@ interface LiquidBottomDockProps {
   onExportPNG: () => void;
   onTriggerAssistant: () => void;
   isAssistantThinking: boolean;
+  isConversationalActive?: boolean;
   isOffline?: boolean;
 }
 
@@ -76,6 +77,7 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   onExportPNG,
   onTriggerAssistant,
   isAssistantThinking,
+  isConversationalActive = false,
   isOffline = false,
 }) => {
   const [showColorPicker, setShowColorPicker] = useState<boolean>(false);
@@ -403,11 +405,19 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
         <button
           key={key}
           onClick={() => handleItemClick('assistant')}
-          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full bg-black hover:bg-neutral-800 transition-transform active:scale-95 shrink-0 select-none ${
-            isAssistantThinking ? 'ring-2 ring-neutral-400 animate-pulse' : ''
-          }`}
-          title="Ask AI Assistant"
+          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all active:scale-95 shrink-0 select-none ${
+            isConversationalActive
+              ? 'bg-neutral-950 ring-2 ring-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.35)] scale-105'
+              : 'bg-black hover:bg-neutral-800'
+          } ${isAssistantThinking ? 'ring-2 ring-neutral-400 animate-pulse' : ''}`}
+          title={isConversationalActive ? 'Conversational Mode Active (Click to End)' : 'Start AI Conversation'}
         >
+          {isConversationalActive && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 ring-2 ring-white" />
+            </span>
+          )}
           <Image
             src="/icons/ai-assistant-white-64.png"
             alt="AI Assistant"

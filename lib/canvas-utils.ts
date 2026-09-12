@@ -1,4 +1,4 @@
-import { Point, Stroke, AIThought, ThoughtSentence, Viewport, ProjectNote } from '@/types/canvas';
+import { Point, Stroke, AIThought, ThoughtSentence, ThoughtSentenceLine, Viewport, ProjectNote } from '@/types/canvas';
 import { jsPDF } from 'jspdf';
 
 // Calculate bounds for a set of points
@@ -21,7 +21,7 @@ export function calculateStrokeBounds(points: Point[]): { minX: number; minY: nu
   return { minX, minY, maxX, maxY };
 }
 
-// Catmull-Rom or Bezier smooth drawing on Canvas 2D context
+// Smooth natural stroke drawing with pressure sensitivity and Bezier interpolation
 export function drawSmoothStroke(
   ctx: CanvasRenderingContext2D,
   stroke: Stroke,
@@ -30,10 +30,13 @@ export function drawSmoothStroke(
   const { points, color, width, tool } = stroke;
   if (points.length < 2) {
     if (points.length === 1) {
+      const p = points[0];
+      const press = typeof p.pressure === 'number' && p.pressure > 0 ? p.pressure : 0.5;
+      const dotRadius = Math.max(0.8, (width * (0.4 + 0.8 * press)) / 2);
       ctx.save();
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(points[0].x, points[0].y, width / 2, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, dotRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -48,31 +51,139 @@ export function drawSmoothStroke(
     ctx.strokeStyle = color.startsWith('#') ? `${color}4D` : 'rgba(254, 240, 138, 0.45)';
     ctx.globalCompositeOperation = 'multiply';
     ctx.lineWidth = width * 3.5;
-  } else if (tool === 'pencil') {
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length - 1; i++) {
+      const xc = (points[i].x + points[i + 1].x) / 2;
+      const yc = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+    }
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // Check if stroke has variable pressure (e.g. from S-Pen or stylus digitizer)
+  const hasPressureVariation = points.some(
+    (p) => typeof p.pressure === 'number' && Math.abs(p.pressure - 0.5) > 0.04
+  );
+
+  if (tool === 'pencil') {
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.75;
-    ctx.lineWidth = width * 0.9;
+    ctx.globalAlpha = 0.72;
+
+    if (!hasPressureVariation) {
+      ctx.lineWidth = width * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length - 1; i++) {
+        const xc = (points[i].x + points[i + 1].x) / 2;
+        const yc = (points[i].y + points[i + 1].y) / 2;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+      }
+      const last = points[points.length - 1];
+      const prev = points[points.length - 2];
+      ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
+      ctx.stroke();
+    } else {
+      let prevMidX = (points[0].x + points[1].x) / 2;
+      let prevMidY = (points[0].y + points[1].y) / 2;
+
+      for (let i = 1; i < points.length - 1; i++) {
+        const curr = points[i];
+        const next = points[i + 1];
+        const nextMidX = (curr.x + next.x) / 2;
+        const nextMidY = (curr.y + next.y) / 2;
+        const pr = typeof curr.pressure === 'number' && curr.pressure > 0 ? curr.pressure : 0.5;
+        ctx.lineWidth = Math.max(0.6, width * 0.85 * (0.5 + 0.8 * pr));
+
+        ctx.beginPath();
+        ctx.moveTo(prevMidX, prevMidY);
+        ctx.quadraticCurveTo(curr.x, curr.y, nextMidX, nextMidY);
+        ctx.stroke();
+
+        prevMidX = nextMidX;
+        prevMidY = nextMidY;
+      }
+    }
+    ctx.restore();
+    return;
+  }
+
+  // Pen Tool: Natural ink rendering with pressure responsiveness
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.95;
+
+  if (hasPressureVariation) {
+    // Render with variable-width quadratic Bézier curves for calligraphic S-Pen feel
+    const p0 = points[0];
+    const p1 = points[1];
+    let prevMidX = (p0.x + p1.x) / 2;
+    let prevMidY = (p0.y + p1.y) / 2;
+
+    // Start tip
+    const p0Press = typeof p0.pressure === 'number' && p0.pressure > 0 ? p0.pressure : 0.4;
+    ctx.lineWidth = Math.max(0.8, width * (0.35 + 0.95 * p0Press));
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(prevMidX, prevMidY);
+    ctx.stroke();
+
+    for (let i = 1; i < points.length - 1; i++) {
+      const curr = points[i];
+      const next = points[i + 1];
+      const nextMidX = (curr.x + next.x) / 2;
+      const nextMidY = (curr.y + next.y) / 2;
+
+      // Smooth pressure with neighbors to eliminate micro-steps
+      const prevP = points[i - 1];
+      const prPrev = typeof prevP.pressure === 'number' && prevP.pressure > 0 ? prevP.pressure : 0.5;
+      const prCurr = typeof curr.pressure === 'number' && curr.pressure > 0 ? curr.pressure : 0.5;
+      const prNext = typeof next.pressure === 'number' && next.pressure > 0 ? next.pressure : 0.5;
+      const smoothedPress = prPrev * 0.25 + prCurr * 0.5 + prNext * 0.25;
+
+      const segWidth = Math.max(0.8, width * (0.35 + 0.95 * smoothedPress));
+      ctx.lineWidth = segWidth;
+
+      ctx.beginPath();
+      ctx.moveTo(prevMidX, prevMidY);
+      ctx.quadraticCurveTo(curr.x, curr.y, nextMidX, nextMidY);
+      ctx.stroke();
+
+      prevMidX = nextMidX;
+      prevMidY = nextMidY;
+    }
+
+    // End tail
+    const last = points[points.length - 1];
+    const lastPress = typeof last.pressure === 'number' && last.pressure > 0 ? last.pressure : 0.35;
+    ctx.lineWidth = Math.max(0.8, width * (0.35 + 0.95 * lastPress));
+    ctx.beginPath();
+    ctx.moveTo(prevMidX, prevMidY);
+    ctx.lineTo(last.x, last.y);
+    ctx.stroke();
   } else {
-    // Pen
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.95;
+    // Fast single path for uniform pointer inputs
     ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length - 1; i++) {
+      const xc = (points[i].x + points[i + 1].x) / 2;
+      const yc = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+    }
+
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
+    ctx.stroke();
   }
 
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-
-  for (let i = 1; i < points.length - 1; i++) {
-    const xc = (points[i].x + points[i + 1].x) / 2;
-    const yc = (points[i].y + points[i + 1].y) / 2;
-    ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
-  }
-
-  // Draw last segment
-  const last = points[points.length - 1];
-  const prev = points[points.length - 2];
-  ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -103,32 +214,53 @@ export function layoutHandwrittenText(
     const raw = rawSentences[sIdx].trim();
     if (!raw) continue;
 
-    // Word wrap this sentence
-    const words = raw.split(' ');
-    let currentLineText = '';
-    let sentenceStartX = currentX;
-    let sentenceStartY = currentY;
+    // Word wrap this sentence into discrete rendered lines
+    const words = raw.split(/\s+/);
+    const sentenceLines: ThoughtSentenceLine[] = [];
+    let currentLineWords: string[] = [];
+    const sentenceStartX = currentX;
+    const sentenceStartY = currentY;
     let sentenceMaxX = currentX;
 
     for (let wIdx = 0; wIdx < words.length; wIdx++) {
       const word = words[wIdx];
-      const testLine = currentLineText ? `${currentLineText} ${word}` : word;
+      const testLine = [...currentLineWords, word].join(' ');
       const testWidth = testLine.length * charWidthApprox;
 
-      if (testWidth > maxWidth && currentLineText) {
-        // Move to next line
+      if (testWidth > maxWidth && currentLineWords.length > 0) {
+        const lineText = currentLineWords.join(' ');
+        const lineWidth = lineText.length * charWidthApprox;
+        sentenceLines.push({
+          text: lineText,
+          x: currentX,
+          y: currentY,
+          width: lineWidth,
+        });
+        sentenceMaxX = Math.max(sentenceMaxX, currentX + lineWidth);
         currentY += lineHeight;
         lineIdx++;
-        currentX = startX;
-        currentLineText = word;
+        currentLineWords = [word];
       } else {
-        currentLineText = testLine;
+        currentLineWords.push(word);
       }
-      sentenceMaxX = Math.max(sentenceMaxX, startX + currentLineText.length * charWidthApprox);
     }
 
-    const approxWidth = Math.min(maxWidth, Math.max(120, raw.length * charWidthApprox));
-    const approxHeight = Math.max(lineHeight, (lineIdx + 1) * lineHeight - (sentenceStartY - startY));
+    if (currentLineWords.length > 0) {
+      const lineText = currentLineWords.join(' ');
+      const lineWidth = lineText.length * charWidthApprox;
+      sentenceLines.push({
+        text: lineText,
+        x: currentX,
+        y: currentY,
+        width: lineWidth,
+      });
+      sentenceMaxX = Math.max(sentenceMaxX, currentX + lineWidth);
+      currentY += lineHeight;
+      lineIdx++;
+    }
+
+    const approxWidth = Math.min(maxWidth, Math.max(120, sentenceMaxX - sentenceStartX));
+    const approxHeight = Math.max(lineHeight, currentY - sentenceStartY);
 
     sentences.push({
       id: `sent-${Date.now()}-${sIdx}-${Math.random().toString(36).slice(2, 6)}`,
@@ -138,10 +270,10 @@ export function layoutHandwrittenText(
       width: approxWidth,
       height: approxHeight,
       lineIndex: lineIdx,
+      lines: sentenceLines,
     });
 
-    currentY += lineHeight * 1.1;
-    lineIdx++;
+    currentY += lineHeight * 0.35; // gentle pause between sentences
     currentX = startX;
 
     overallMaxX = Math.max(overallMaxX, sentenceMaxX);
@@ -297,11 +429,23 @@ export async function exportCanvasToImage(
   ctx.font = '22px "Kalam", "Caveat", cursive';
 
   for (const thought of thoughts) {
-    const lines = thought.text.split('\n');
-    let lineY = thought.y;
-    for (const line of lines) {
-      ctx.fillText(line, thought.x, lineY);
-      lineY += 30;
+    if (thought.sentences && thought.sentences.length > 0) {
+      for (const sentence of thought.sentences) {
+        if (sentence.lines && sentence.lines.length > 0) {
+          for (const line of sentence.lines) {
+            ctx.fillText(line.text, line.x, line.y);
+          }
+        } else {
+          ctx.fillText(sentence.text, sentence.x, sentence.y);
+        }
+      }
+    } else {
+      const lines = thought.text.split('\n');
+      let lineY = thought.y;
+      for (const line of lines) {
+        ctx.fillText(line, thought.x, lineY);
+        lineY += 30;
+      }
     }
   }
 
