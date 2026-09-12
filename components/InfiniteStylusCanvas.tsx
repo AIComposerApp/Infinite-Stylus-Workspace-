@@ -703,13 +703,21 @@ export const InfiniteStylusCanvas: React.FC = () => {
         }
       }
 
-      // If offline or network request failed, seamlessly invoke on-device offline intelligence!
+      // If offline or network request failed, check for on-device local model
       if (!textResult || !textResult.trim()) {
         const offlineRes = await generateOfflineAssistantThought(
           customPrompt || (conversationHistory.length > 0 ? 'Continue this note thought.' : 'Expand on notes.'),
           contextSnippet
         );
-        textResult = offlineRes.text;
+        if (offlineRes.success && offlineRes.text) {
+          textResult = offlineRes.text;
+        } else {
+          // Remove the temporary thinking indicator and inform the user
+          setThoughts((prev) => prev.filter((t) => t.id !== thoughtId));
+          setActiveThoughtId(null);
+          showToast('Offline: Reconnect to internet for Gemini AI answers. Notes are saved safely.');
+          return;
+        }
       }
 
       // Natural human contemplation pause before picking up the pen to write
