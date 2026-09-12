@@ -32,7 +32,7 @@ import { ThoughtBubbleOffScreen } from '@/components/ThoughtBubbleOffScreen';
 import { ProjectsDrawer } from '@/components/ProjectsDrawer';
 import { TopToast } from '@/components/TopToast';
 import { SentenceCopyOverlay } from '@/components/SentenceCopyOverlay';
-import { PenTool, ShieldCheck, Hand } from 'lucide-react';
+import { PenTool, ShieldCheck, Hand, Edit3, Check } from 'lucide-react';
 
 const subscribeOnline = (callback: () => void) => {
   if (typeof window === 'undefined') return () => {};
@@ -187,6 +187,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
   // Assistant & Off-Screen Thought Bubble State
   const [activeThoughtId, setActiveThoughtId] = useState<string | null>(null);
+
+  // Top header project title inline editing
+  const [isEditingTopTitle, setIsEditingTopTitle] = useState<boolean>(false);
+  const [topTitleInput, setTopTitleInput] = useState<string>('');
 
   // Screen dimensions for off-screen bubble calculation
   const [windowDimensions, setWindowDimensions] = useState<{ width: number; height: number }>({
@@ -460,6 +464,24 @@ export const InfiniteStylusCanvas: React.FC = () => {
       });
     },
     [activeProjectId, handleSelectProject, handleNewProject]
+  );
+
+  // Rename Project
+  const handleRenameProject = useCallback(
+    (id: string, newTitle: string) => {
+      const trimmed = newTitle.trim();
+      if (!trimmed) return;
+      setProjects((prev) => {
+        const updated = prev.map((p) => (p.id === id ? { ...p, title: trimmed, updatedAt: Date.now() } : p));
+        saveProjectsToStorage(updated);
+        return updated;
+      });
+      if (activeProjectIdRef.current === id && activeProjectRef.current) {
+        activeProjectRef.current = { ...activeProjectRef.current, title: trimmed, updatedAt: Date.now() };
+      }
+      showToast(`Renamed to "${trimmed}"`);
+    },
+    [showToast]
   );
 
   // Undo / Redo
@@ -1556,6 +1578,57 @@ export const InfiniteStylusCanvas: React.FC = () => {
             }`}
           />
         </button>
+
+        {/* Active Project Title (Click to rename) */}
+        {isEditingTopTitle ? (
+          <div className="flex items-center gap-1 bg-white/95 backdrop-blur-md border border-black/20 rounded-full px-2.5 py-1 shadow-sm">
+            <input
+              type="text"
+              value={topTitleInput}
+              autoFocus
+              onChange={(e) => setTopTitleInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleRenameProject(activeProjectId, topTitleInput);
+                  setIsEditingTopTitle(false);
+                } else if (e.key === 'Escape') {
+                  setIsEditingTopTitle(false);
+                }
+              }}
+              onBlur={() => {
+                handleRenameProject(activeProjectId, topTitleInput);
+                setIsEditingTopTitle(false);
+              }}
+              className="text-xs font-medium text-neutral-900 bg-transparent focus:outline-none w-28 sm:w-44"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                handleRenameProject(activeProjectId, topTitleInput);
+                setIsEditingTopTitle(false);
+              }}
+              className="p-0.5 rounded-full bg-neutral-900 text-white hover:bg-black"
+              title="Save note title"
+            >
+              <Check className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setTopTitleInput(activeProject?.title || 'Untitled Note');
+              setIsEditingTopTitle(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white/90 hover:bg-white text-neutral-700 hover:text-neutral-900 border border-neutral-200/90 shadow-sm backdrop-blur-md transition-all group active:scale-95"
+            title="Click to rename this note"
+          >
+            <span className="max-w-[120px] sm:max-w-[180px] truncate">
+              {activeProject?.title || 'Untitled Note'}
+            </span>
+            <Edit3 className="w-3 h-3 text-neutral-400 group-hover:text-neutral-700 transition-colors shrink-0" />
+          </button>
+        )}
       </div>
 
       {/* Infinite Canvas */}
@@ -1675,8 +1748,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onNewProject={handleNewProject}
         onPinProject={handlePinProject}
         onDeleteProject={handleDeleteProject}
+        onRenameProject={handleRenameProject}
         onNotify={showToast}
       />
     </div>
   );
 };
+
+export default InfiniteStylusCanvas;
