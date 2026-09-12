@@ -1,0 +1,416 @@
+import { Point, Stroke, AIThought, ThoughtSentence, Viewport, ProjectNote } from '@/types/canvas';
+import { jsPDF } from 'jspdf';
+
+// Calculate bounds for a set of points
+export function calculateStrokeBounds(points: Point[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  if (points.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  return { minX, minY, maxX, maxY };
+}
+
+// Catmull-Rom or Bezier smooth drawing on Canvas 2D context
+export function drawSmoothStroke(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  scale: number = 1
+) {
+  const { points, color, width, tool } = stroke;
+  if (points.length < 2) {
+    if (points.length === 1) {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, width / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (tool === 'highlighter') {
+    ctx.strokeStyle = color.startsWith('#') ? `${color}4D` : 'rgba(254, 240, 138, 0.45)';
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.lineWidth = width * 3.5;
+  } else if (tool === 'pencil') {
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = width * 0.9;
+  } else {
+    // Pen
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.95;
+    ctx.lineWidth = width;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const xc = (points[i].x + points[i + 1].x) / 2;
+    const yc = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+  }
+
+  // Draw last segment
+  const last = points[points.length - 1];
+  const prev = points[points.length - 2];
+  ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Split generated text into natural sentences with laid-out coordinates
+export function layoutHandwrittenText(
+  text: string,
+  startX: number,
+  startY: number,
+  maxWidth: number = 420,
+  lineHeight: number = 32,
+  charWidthApprox: number = 9
+): { sentences: ThoughtSentence[]; totalBounds: { minX: number; minY: number; maxX: number; maxY: number } } {
+  // Regex to split into sentences while preserving text
+  const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
+  const rawSentences = text.match(sentenceRegex) || [text];
+  
+  const sentences: ThoughtSentence[] = [];
+  let currentY = startY;
+  let currentX = startX;
+  let overallMinX = startX;
+  let overallMinY = startY;
+  let overallMaxX = startX;
+  let overallMaxY = startY;
+
+  let lineIdx = 0;
+
+  for (let sIdx = 0; sIdx < rawSentences.length; sIdx++) {
+    const raw = rawSentences[sIdx].trim();
+    if (!raw) continue;
+
+    // Word wrap this sentence
+    const words = raw.split(' ');
+    let currentLineText = '';
+    let sentenceStartX = currentX;
+    let sentenceStartY = currentY;
+    let sentenceMaxX = currentX;
+
+    for (let wIdx = 0; wIdx < words.length; wIdx++) {
+      const word = words[wIdx];
+      const testLine = currentLineText ? `${currentLineText} ${word}` : word;
+      const testWidth = testLine.length * charWidthApprox;
+
+      if (testWidth > maxWidth && currentLineText) {
+        // Move to next line
+        currentY += lineHeight;
+        lineIdx++;
+        currentX = startX;
+        currentLineText = word;
+      } else {
+        currentLineText = testLine;
+      }
+      sentenceMaxX = Math.max(sentenceMaxX, startX + currentLineText.length * charWidthApprox);
+    }
+
+    const approxWidth = Math.min(maxWidth, Math.max(120, raw.length * charWidthApprox));
+    const approxHeight = Math.max(lineHeight, (lineIdx + 1) * lineHeight - (sentenceStartY - startY));
+
+    sentences.push({
+      id: `sent-${Date.now()}-${sIdx}-${Math.random().toString(36).slice(2, 6)}`,
+      text: raw,
+      x: sentenceStartX,
+      y: sentenceStartY,
+      width: approxWidth,
+      height: approxHeight,
+      lineIndex: lineIdx,
+    });
+
+    currentY += lineHeight * 1.1;
+    lineIdx++;
+    currentX = startX;
+
+    overallMaxX = Math.max(overallMaxX, sentenceMaxX);
+    overallMaxY = Math.max(overallMaxY, currentY);
+  }
+
+  return {
+    sentences,
+    totalBounds: {
+      minX: overallMinX - 10,
+      minY: overallMinY - 10,
+      maxX: overallMaxX + 20,
+      maxY: overallMaxY + 20,
+    },
+  };
+}
+
+// Calculate off-screen indicator position and angle for thought bubble
+export function getOffScreenBubblePosition(
+  targetCanvasX: number,
+  targetCanvasY: number,
+  viewport: Viewport,
+  screenWidth: number,
+  screenHeight: number,
+  margin: number = 48
+): { isOffScreen: boolean; screenX: number; screenY: number; angleRad: number } {
+  const screenX = targetCanvasX * viewport.zoom + viewport.x;
+  const screenY = targetCanvasY * viewport.zoom + viewport.y;
+
+  const isInside =
+    screenX >= margin &&
+    screenX <= screenWidth - margin &&
+    screenY >= margin &&
+    screenY <= screenHeight - margin;
+
+  if (isInside) {
+    return { isOffScreen: false, screenX, screenY, angleRad: 0 };
+  }
+
+  // Vector from screen center
+  const centerX = screenWidth / 2;
+  const centerY = screenHeight / 2;
+  const dx = screenX - centerX;
+  const dy = screenY - centerY;
+  const angleRad = Math.atan2(dy, dx);
+
+  // Clamp to rectangular screen bounds minus margin
+  const minX = margin;
+  const maxX = screenWidth - margin;
+  const minY = margin;
+  const maxY = screenHeight - margin;
+
+  let clampedX = centerX;
+  let clampedY = centerY;
+
+  if (dx === 0 && dy === 0) {
+    return { isOffScreen: true, screenX: centerX, screenY: margin, angleRad: -Math.PI / 2 };
+  }
+
+  // Ray intersection with the 4 bounding box edges
+  const tCandidates: number[] = [];
+
+  if (dx > 0) tCandidates.push((maxX - centerX) / dx);
+  if (dx < 0) tCandidates.push((minX - centerX) / dx);
+  if (dy > 0) tCandidates.push((maxY - centerY) / dy);
+  if (dy < 0) tCandidates.push((minY - centerY) / dy);
+
+  const t = Math.min(...tCandidates.filter((v) => v > 0));
+
+  clampedX = Math.max(minX, Math.min(maxX, centerX + dx * t));
+  clampedY = Math.max(minY, Math.min(maxY, centerY + dy * t));
+
+  return {
+    isOffScreen: true,
+    screenX: clampedX,
+    screenY: clampedY,
+    angleRad,
+  };
+}
+
+// Export canvas contents as high-resolution PNG image
+export async function exportCanvasToImage(
+  strokes: Stroke[],
+  thoughts: AIThought[],
+  options: { padding?: number; background?: string } = {}
+): Promise<string> {
+  const padding = options.padding ?? 60;
+  const bgColor = options.background ?? '#FAF9F6';
+
+  if (strokes.length === 0 && thoughts.length === 0) {
+    // Empty canvas default size
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 800;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const s of strokes) {
+    minX = Math.min(minX, s.bounds.minX);
+    minY = Math.min(minY, s.bounds.minY);
+    maxX = Math.max(maxX, s.bounds.maxX);
+    maxY = Math.max(maxY, s.bounds.maxY);
+  }
+
+  for (const t of thoughts) {
+    minX = Math.min(minX, t.bounds.minX);
+    minY = Math.min(minY, t.bounds.minY);
+    maxX = Math.max(maxX, t.bounds.maxX);
+    maxY = Math.max(maxY, t.bounds.maxY);
+  }
+
+  const width = Math.max(600, maxX - minX + padding * 2);
+  const height = Math.max(400, maxY - minY + padding * 2);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width * 2; // 2x DPI
+  canvas.height = height * 2;
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(2, 2);
+
+  // Background
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, width, height);
+
+  // Subtle dot grid
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+  for (let x = 0; x < width; x += 28) {
+    for (let y = 0; y < height; y += 28) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.save();
+  ctx.translate(-minX + padding, -minY + padding);
+
+  // Draw strokes
+  for (const stroke of strokes) {
+    drawSmoothStroke(ctx, stroke);
+  }
+
+  // Draw thoughts text in handwriting style
+  ctx.fillStyle = '#222222';
+  ctx.font = '22px "Kalam", "Caveat", cursive';
+
+  for (const thought of thoughts) {
+    const lines = thought.text.split('\n');
+    let lineY = thought.y;
+    for (const line of lines) {
+      ctx.fillText(line, thought.x, lineY);
+      lineY += 30;
+    }
+  }
+
+  ctx.restore();
+  return canvas.toDataURL('image/png');
+}
+
+// Export canvas as vector/raster PDF
+export async function exportCanvasToPDF(
+  strokes: Stroke[],
+  thoughts: AIThought[],
+  title: string = 'Stylus Workspace Note'
+): Promise<void> {
+  const dataUrl = await exportCanvasToImage(strokes, thoughts);
+  const pdf = new jsPDF({
+    orientation: 'landscape',
+    unit: 'px',
+    format: [1200, 800],
+  });
+
+  pdf.addImage(dataUrl, 'PNG', 0, 0, 1200, 800);
+  pdf.save(`${title.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.pdf`);
+}
+
+// Local storage project persistence
+const STORAGE_KEY = 'stylus_infinite_workspace_projects_v2';
+const ACTIVE_PROJECT_KEY = 'stylus_infinite_workspace_active_id_v2';
+
+const DEFAULT_INITIAL_PROJECT_ID = 'proj-seed-default-1';
+
+function getDefaultProjects(): ProjectNote[] {
+  return [
+    {
+      id: DEFAULT_INITIAL_PROJECT_ID,
+      title: 'Mind Stream & Brainstorm',
+      createdAt: 1700000000000,
+      updatedAt: Date.now(),
+      isPinned: true,
+      strokes: [],
+      thoughts: [],
+      viewport: { x: 200, y: 150, zoom: 1 },
+    },
+  ];
+}
+
+export function loadSavedProjects(): ProjectNote[] {
+  if (typeof window === 'undefined') return getDefaultProjects();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      const defaults = getDefaultProjects();
+      saveProjectsToStorage(defaults);
+      saveActiveProjectId(defaults[0].id);
+      return defaults;
+    }
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+    const defaults = getDefaultProjects();
+    saveProjectsToStorage(defaults);
+    return defaults;
+  } catch (e) {
+    console.error('Error loading projects from storage:', e);
+    return getDefaultProjects();
+  }
+}
+
+export function saveProjectsToStorage(projects: ProjectNote[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+  } catch (e) {
+    console.warn('Storage quota warning or write failure:', e);
+  }
+}
+
+export function autoSaveSingleProject(project: ProjectNote) {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = loadSavedProjects();
+    const index = current.findIndex((p) => p.id === project.id);
+    let updated: ProjectNote[];
+    if (index >= 0) {
+      updated = [...current];
+      updated[index] = { ...project, updatedAt: Date.now() };
+    } else {
+      updated = [project, ...current];
+    }
+    saveProjectsToStorage(updated);
+  } catch (e) {
+    console.error('Error auto-saving project:', e);
+  }
+}
+
+export function loadActiveProjectId(): string | null {
+  if (typeof window === 'undefined') return null;
+  const saved = localStorage.getItem(ACTIVE_PROJECT_KEY);
+  if (saved) return saved;
+  const list = loadSavedProjects();
+  return list.length > 0 ? list[0].id : DEFAULT_INITIAL_PROJECT_ID;
+}
+
+export function saveActiveProjectId(id: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, id);
+  } catch (e) {
+    console.warn('Failed to save active project ID:', e);
+  }
+}
+

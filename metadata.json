@@ -1,0 +1,6 @@
+{
+  "name": "Infinite Stylus Workspace",
+  "description": "Infinite stylus brainstorming canvas with organic handwriting AI assistance, gesture text extraction, and liquid navigation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
