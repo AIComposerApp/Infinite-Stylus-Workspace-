@@ -9,6 +9,7 @@ import {
   Viewport,
   StylusToolType,
   ProjectNote,
+  CanvasTextItem,
 } from '@/types/canvas';
 import {
   calculateStrokeBounds,
@@ -28,7 +29,6 @@ import { ThoughtBubbleOffScreen } from '@/components/ThoughtBubbleOffScreen';
 import { ProjectsDrawer } from '@/components/ProjectsDrawer';
 import { TopToast } from '@/components/TopToast';
 import { SentenceCopyOverlay } from '@/components/SentenceCopyOverlay';
-import { ConversationalAssistantBar } from '@/components/ConversationalAssistantBar';
 import { PenTool, ShieldCheck, Hand } from 'lucide-react';
 
 const subscribeOnline = (callback: () => void) => {
@@ -93,6 +93,13 @@ export const InfiniteStylusCanvas: React.FC = () => {
     return proj?.thoughts || [];
   });
 
+  const [canvasTexts, setCanvasTexts] = useState<CanvasTextItem[]>(() => {
+    const list = loadSavedProjects();
+    const savedId = loadActiveProjectId();
+    const proj = list.find((p) => p.id === savedId) || list[0];
+    return proj?.canvasTexts || [];
+  });
+
   const [viewport, setViewport] = useState<Viewport>(() => {
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
@@ -104,6 +111,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const viewportRef = useRef<Viewport>(viewport);
   const strokesRef = useRef<Stroke[]>(strokes);
   const thoughtsRef = useRef<AIThought[]>(thoughts);
+  const canvasTextsRef = useRef<CanvasTextItem[]>(canvasTexts);
   const activeProjectIdRef = useRef<string>(activeProjectId);
   const activeProjectRef = useRef<ProjectNote | null>(activeProject);
 
@@ -120,21 +128,29 @@ export const InfiniteStylusCanvas: React.FC = () => {
   }, [thoughts]);
 
   useEffect(() => {
+    canvasTextsRef.current = canvasTexts;
+  }, [canvasTexts]);
+
+  useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
     activeProjectRef.current = activeProject;
   }, [activeProjectId, activeProject]);
 
+  // Active text block typing session (blinking vertical caret)
+  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const activeInputRef = useRef<HTMLTextAreaElement | null>(null);
+
   // History for Undo / Redo
-  const [history, setHistory] = useState<{ strokes: Stroke[]; thoughts: AIThought[] }[]>(() => {
+  const [history, setHistory] = useState<{ strokes: Stroke[]; thoughts: AIThought[]; canvasTexts: CanvasTextItem[] }[]>(() => {
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
-    return [{ strokes: proj?.strokes || [], thoughts: proj?.thoughts || [] }];
+    return [{ strokes: proj?.strokes || [], thoughts: proj?.thoughts || [], canvasTexts: proj?.canvasTexts || [] }];
   });
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // Stylus Tools State
-  const [currentTool, setCurrentTool] = useState<StylusToolType>('pen');
+  // Stylus Tools State - default to 'pan' (Move & Type mode). Pen tools explicitly activate drawing/stylus!
+  const [currentTool, setCurrentTool] = useState<StylusToolType>('pan');
   const [currentColor, setCurrentColor] = useState<string>('#1E1E1E');
   const [strokeWidth, setStrokeWidth] = useState<number>(3);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -144,9 +160,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const currentStrokeRef = useRef<Point[]>([]);
   const activePointerIdRef = useRef<number | null>(null);
 
-  // Canvas Pan Interaction Ref (mouse drag or pan tool)
+  // Canvas Pan Interaction Ref (1-finger drag or mouse drag)
   const isPanningRef = useRef<boolean>(false);
   const lastPanPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pointerDownPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const hasDraggedRef = useRef<boolean>(false);
 
   // Multi-Touch Two-Finger Tracking (Pinch-to-Scale & Pan Move Anywhere)
   const activePointersRef = useRef<Map<number, { x: number; y: number; type: string }>>(new Map());
@@ -166,7 +184,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
   // Assistant & Off-Screen Thought Bubble State
   const [activeThoughtId, setActiveThoughtId] = useState<string | null>(null);
-  const [isConversationalActive, setIsConversationalActive] = useState<boolean>(false);
 
   // Screen dimensions for off-screen bubble calculation
   const [windowDimensions, setWindowDimensions] = useState<{ width: number; height: number }>({
@@ -228,6 +245,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           ...activeProjectRef.current,
           strokes: strokesRef.current,
           thoughts: thoughtsRef.current,
+          canvasTexts: canvasTextsRef.current,
           viewport: viewportRef.current,
         });
       }
@@ -284,6 +302,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
             ...p,
             strokes,
             thoughts,
+            canvasTexts,
             viewport,
             updatedAt: Date.now(),
           };
@@ -297,7 +316,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       setIsSaving(false);
       showToast('Saved to device');
     }, 300);
-  }, [activeProjectId, strokes, thoughts, viewport, showToast]);
+  }, [activeProjectId, strokes, thoughts, canvasTexts, viewport, showToast]);
 
   // Switch Active Project
   const handleSelectProject = useCallback(
@@ -310,11 +329,13 @@ export const InfiniteStylusCanvas: React.FC = () => {
         saveActiveProjectId(target.id);
         setStrokes(target.strokes || []);
         setThoughts(target.thoughts || []);
+        setCanvasTexts(target.canvasTexts || []);
         setViewport(target.viewport || { x: 200, y: 150, zoom: 1 });
-        setHistory([{ strokes: target.strokes || [], thoughts: target.thoughts || [] }]);
+        setHistory([{ strokes: target.strokes || [], thoughts: target.thoughts || [], canvasTexts: target.canvasTexts || [] }]);
         setHistoryIndex(0);
         setSelectedSentences([]);
         setActiveThoughtId(null);
+        setActiveTextId(null);
       }
     },
     [projects, handleSaveProject]
@@ -332,6 +353,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       isPinned: false,
       strokes: [],
       thoughts: [],
+      canvasTexts: [],
       viewport: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150, zoom: 1 },
     };
 
@@ -342,11 +364,13 @@ export const InfiniteStylusCanvas: React.FC = () => {
     saveActiveProjectId(newId);
     setStrokes([]);
     setThoughts([]);
+    setCanvasTexts([]);
     setViewport(newNote.viewport);
-    setHistory([{ strokes: [], thoughts: [] }]);
+    setHistory([{ strokes: [], thoughts: [], canvasTexts: [] }]);
     setHistoryIndex(0);
     setSelectedSentences([]);
     setActiveThoughtId(null);
+    setActiveTextId(null);
     showToast('New board ready');
   }, [projects, handleSaveProject, showToast]);
 
@@ -380,9 +404,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
   // Undo / Redo
   const pushHistory = useCallback(
-    (newStrokes: Stroke[], newThoughts: AIThought[]) => {
+    (newStrokes: Stroke[], newThoughts: AIThought[], newTexts: CanvasTextItem[] = canvasTextsRef.current) => {
       const nextHistory = history.slice(0, historyIndex + 1);
-      nextHistory.push({ strokes: newStrokes, thoughts: newThoughts });
+      nextHistory.push({ strokes: newStrokes, thoughts: newThoughts, canvasTexts: newTexts });
       setHistory(nextHistory);
       setHistoryIndex(nextHistory.length - 1);
 
@@ -392,6 +416,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           ...activeProjectRef.current,
           strokes: newStrokes,
           thoughts: newThoughts,
+          canvasTexts: newTexts,
           viewport: viewportRef.current,
         });
       }
@@ -404,6 +429,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       const prev = history[historyIndex - 1];
       setStrokes(prev.strokes);
       setThoughts(prev.thoughts);
+      setCanvasTexts(prev.canvasTexts || []);
       setHistoryIndex(historyIndex - 1);
       setSelectedSentences([]);
 
@@ -412,6 +438,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           ...activeProjectRef.current,
           strokes: prev.strokes,
           thoughts: prev.thoughts,
+          canvasTexts: prev.canvasTexts || [],
           viewport: viewportRef.current,
         });
       }
@@ -423,6 +450,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       const next = history[historyIndex + 1];
       setStrokes(next.strokes);
       setThoughts(next.thoughts);
+      setCanvasTexts(next.canvasTexts || []);
       setHistoryIndex(historyIndex + 1);
       setSelectedSentences([]);
 
@@ -431,6 +459,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           ...activeProjectRef.current,
           strokes: next.strokes,
           thoughts: next.thoughts,
+          canvasTexts: next.canvasTexts || [],
           viewport: viewportRef.current,
         });
       }
@@ -477,27 +506,42 @@ export const InfiniteStylusCanvas: React.FC = () => {
         return;
       }
 
-      let spawnX = targetPoint?.x ?? 0;
-      let spawnY = targetPoint?.y ?? 0;
+      let spawnX = targetPoint?.x;
+      let spawnY = targetPoint?.y;
 
-      if (!targetPoint) {
-        const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
-        if (completedThoughts.length > 0) {
-          const lastThought = completedThoughts[completedThoughts.length - 1];
-          spawnX = lastThought.x;
-          spawnY = lastThought.bounds.maxY + 36;
-        } else if (strokesRef.current.length > 0) {
-          const lastStroke = strokesRef.current[strokesRef.current.length - 1];
-          spawnX = lastStroke.bounds.minX;
-          spawnY = lastStroke.bounds.maxY + 36;
+      if (spawnX === undefined || spawnY === undefined) {
+        // Priority 1: Check active or latest typed text on canvas to OVERLAP existing text!
+        const textsWithContent = canvasTextsRef.current.filter((t) => t.text && t.text.trim());
+        const activeTextItem = activeTextId
+          ? canvasTextsRef.current.find((t) => t.id === activeTextId && t.text.trim())
+          : null;
+        const targetText = activeTextItem || (textsWithContent.length > 0 ? textsWithContent[textsWithContent.length - 1] : null);
+
+        if (targetText) {
+          spawnX = targetText.x;
+          spawnY = targetText.y;
+          if (!customPrompt) {
+            customPrompt = targetText.text;
+          }
         } else {
-          const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
-          spawnX = center.x - 120;
-          spawnY = center.y - 40;
+          const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
+          if (completedThoughts.length > 0) {
+            const lastThought = completedThoughts[completedThoughts.length - 1];
+            spawnX = lastThought.x;
+            spawnY = lastThought.bounds.maxY + 36;
+          } else if (strokesRef.current.length > 0) {
+            const lastStroke = strokesRef.current[strokesRef.current.length - 1];
+            spawnX = lastStroke.bounds.minX;
+            spawnY = lastStroke.bounds.maxY + 36;
+          } else {
+            const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
+            spawnX = center.x - 120;
+            spawnY = center.y - 40;
+          }
         }
       }
 
-      // Smoothly pan canvas to keep newly writing thought within comfortable view
+      // Smoothly pan canvas if needed to keep newly writing thought within comfortable view
       const currentViewport = viewportRef.current;
       const screenY = spawnY * currentViewport.zoom + currentViewport.y;
       if (screenY > window.innerHeight - 220 || screenY < 80) {
@@ -513,11 +557,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
         x: spawnX,
         y: spawnY,
         status: 'thinking',
-        prompt: customPrompt || 'Assistant continuing dialogue...',
+        prompt: customPrompt || 'Assistant expanding thoughts...',
         text: '',
         sentences: [],
         revealedCount: 0,
-        color: currentColor === '#1E1E1E' ? '#262626' : currentColor,
+        color: currentColor === '#1E1E1E' ? '#1E3A8A' : currentColor, // Deep Indigo ink for organic contrast when overlapping text
         fontFamily: 'Kalam',
         createdAt: Date.now(),
         lastUpdated: Date.now(),
@@ -528,21 +572,23 @@ export const InfiniteStylusCanvas: React.FC = () => {
       setActiveThoughtId(thoughtId);
       showToast('Assistant writing in ink...');
 
-      // Gather ongoing conversation history so back-and-forth context is preserved
+      // Gather ongoing conversation and canvas notes context
       const conversationHistory = thoughtsRef.current
         .filter((t) => t.text && t.text.trim())
         .map((t) => ({
           prompt: t.prompt,
           response: t.text,
         }));
-      const contextSnippet = thoughtsRef.current.map((t) => t.text).join(' \n ');
+      const textNotesContext = canvasTextsRef.current.map((t) => t.text).join(' \n ');
+      const thoughtsContext = thoughtsRef.current.map((t) => t.text).join(' \n ');
+      const contextSnippet = `${textNotesContext}\n${thoughtsContext}`.trim();
 
       try {
         const res = await fetch('/api/gemini/assist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            prompt: customPrompt || (conversationHistory.length > 0 ? 'Continue our conversational thread.' : 'Expand on my current thoughts and continue organic brainstorming notes.'),
+            prompt: customPrompt || (conversationHistory.length > 0 ? 'Continue this note thought.' : 'Expand on my current notes and continue organic brainstorming.'),
             canvasContext: contextSnippet,
             conversationHistory,
           }),
@@ -577,7 +623,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
             const updated = prev.map((t) =>
               t.id === thoughtId ? { ...t, status: 'completed' as const } : t
             );
-            pushHistory(strokesRef.current, updated);
+            pushHistory(strokesRef.current, updated, canvasTextsRef.current);
             return updated;
           });
         }, totalWritingDuration);
@@ -608,33 +654,104 @@ export const InfiniteStylusCanvas: React.FC = () => {
             const updated = prev.map((t) =>
               t.id === thoughtId ? { ...t, status: 'completed' as const } : t
             );
-            pushHistory(strokesRef.current, updated);
+            pushHistory(strokesRef.current, updated, canvasTextsRef.current);
             return updated;
           });
         }, 1500);
       }
     },
-    [currentColor, screenToCanvas, showToast, pushHistory]
+    [currentColor, screenToCanvas, showToast, pushHistory, activeTextId]
   );
 
-  // Toggle Conversational Flow Mode
-  const handleToggleConversational = useCallback(() => {
-    setIsConversationalActive((prev) => {
-      const next = !prev;
-      if (next) {
-        showToast('Conversational Mode: Active. Write notes or reply to continue.');
-        const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
-        if (completedThoughts.length === 0 && strokesRef.current.length === 0) {
-          triggerAssistantResponse(undefined, 'Ready to brainstorm together. Write or sketch on the canvas, or ask anything to begin.');
-        } else if (strokesRef.current.length > 0) {
-          triggerAssistantResponse(undefined, 'Respond to and continue my handwritten notes on the canvas.');
-        }
+  // Trigger AI Assistant directly from dock or shortcut (overlaps existing text!)
+  const handleTriggerAssistant = useCallback(() => {
+    const textsWithContent = canvasTextsRef.current.filter((t) => t.text && t.text.trim());
+    const activeTextItem = activeTextId
+      ? canvasTextsRef.current.find((t) => t.id === activeTextId && t.text.trim())
+      : null;
+    const targetText = activeTextItem || (textsWithContent.length > 0 ? textsWithContent[textsWithContent.length - 1] : null);
+
+    if (targetText) {
+      triggerAssistantResponse({ x: targetText.x, y: targetText.y }, targetText.text);
+    } else {
+      triggerAssistantResponse();
+    }
+  }, [activeTextId, triggerAssistantResponse]);
+
+  // Tap on canvas in Move & Type mode to position cursor or edit text
+  const handleCanvasTapToType = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvasPos = screenToCanvas(clientX, clientY);
+
+      // Check if user clicked an existing text item
+      const clickedItem = canvasTextsRef.current.find((item) => {
+        const lines = item.text ? item.text.split('\n') : [''];
+        const width = Math.max(80, Math.max(...lines.map((l) => l.length * 12)));
+        const height = Math.max(36, lines.length * 32);
+        return (
+          canvasPos.x >= item.x - 14 &&
+          canvasPos.x <= item.x + width + 28 &&
+          canvasPos.y >= item.y - 14 &&
+          canvasPos.y <= item.y + height + 14
+        );
+      });
+
+      if (clickedItem) {
+        setActiveTextId(clickedItem.id);
+        setTimeout(() => {
+          activeInputRef.current?.focus();
+        }, 30);
       } else {
-        showToast('Conversation paused. All thoughts and notes are saved.');
+        // Create new text block with normal blinking vertical line
+        const newId = `text-${Date.now()}`;
+        const newItem: CanvasTextItem = {
+          id: newId,
+          text: '',
+          x: Math.round(canvasPos.x),
+          y: Math.round(canvasPos.y),
+          color: currentColor || '#1E1E1E',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+
+        const cleaned = canvasTextsRef.current.filter((t) => t.text && t.text.trim().length > 0);
+        const updated = [...cleaned, newItem];
+        setCanvasTexts(updated);
+        pushHistory(strokesRef.current, thoughtsRef.current, updated);
+        setActiveTextId(newId);
+
+        setTimeout(() => {
+          activeInputRef.current?.focus();
+        }, 40);
       }
-      return next;
+    },
+    [screenToCanvas, currentColor, pushHistory]
+  );
+
+  // Update text for currently active typing item
+  const handleUpdateActiveText = useCallback(
+    (newText: string) => {
+      if (!activeTextId) return;
+      setCanvasTexts((prev) =>
+        prev.map((t) => (t.id === activeTextId ? { ...t, text: newText, updatedAt: Date.now() } : t))
+      );
+    },
+    [activeTextId]
+  );
+
+  // Blur/finish typing
+  const handleBlurActiveText = useCallback(() => {
+    setCanvasTexts((prev) => {
+      const activeItem = prev.find((t) => t.id === activeTextId);
+      let updated = prev;
+      if (activeItem && !activeItem.text.trim()) {
+        updated = prev.filter((t) => t.id !== activeTextId);
+      }
+      pushHistory(strokesRef.current, thoughtsRef.current, updated);
+      return updated;
     });
-  }, [showToast, triggerAssistantResponse]);
+    setActiveTextId(null);
+  }, [activeTextId, pushHistory]);
 
   // Double-tap or Click Detection to select sentence
   const handleSentenceSelectAtCanvasPoint = useCallback(
@@ -767,7 +884,25 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
     }
 
-    // 3. Draw AI Thoughts (Organic Inner-Self Handwriting)
+    // 2.5 Draw Typed Canvas Text Items (in the exact same handwriting font Kalam/Caveat)
+    for (const item of canvasTexts) {
+      if (item.id === activeTextId) continue; // Rendered live in textarea overlay with blinking cursor
+      if (!item.text || !item.text.trim()) continue;
+
+      ctx.save();
+      ctx.font = '22px "Kalam", "Caveat", cursive';
+      ctx.fillStyle = item.color || '#1E1E1E';
+      ctx.textBaseline = 'top';
+
+      const lines = item.text.split('\n');
+      const lineHeight = 32;
+      lines.forEach((line, index) => {
+        ctx.fillText(line, item.x, item.y + index * lineHeight);
+      });
+      ctx.restore();
+    }
+
+    // 3. Draw AI Thoughts (Organic Inner-Self Handwriting overlapping notes)
     for (const thought of thoughts) {
       if (thought.status === 'thinking') {
         const bounceTime = Date.now() / 200;
@@ -833,7 +968,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
 
     ctx.restore();
-  }, [viewport, strokes, thoughts, currentTool, currentColor, strokeWidth]);
+  }, [viewport, strokes, thoughts, canvasTexts, activeTextId, currentTool, currentColor, strokeWidth]);
 
   // Animation Frame Loop
   useEffect(() => {
@@ -934,14 +1069,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
     lastTapTimeRef.current = now;
     lastTapPosRef.current = { x: screenX, y: screenY };
 
+    const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
+
     if (isDoubleTap || currentTool === 'select') {
       handleSentenceSelectAtCanvasPoint(canvasPos);
       return;
     }
 
-    if (currentTool === 'pan' || isMiddleOrRight) {
+    // Move & Type mode (1-finger drag moves the canvas, single tap enables typing anywhere)
+    // Stylus is NOT the default: only pen tools activate drawing!
+    if (!isPenTool || isMiddleOrRight) {
       isPanningRef.current = true;
       lastPanPointRef.current = { x: screenX, y: screenY };
+      pointerDownPosRef.current = { x: screenX, y: screenY };
+      hasDraggedRef.current = false;
       return;
     }
 
@@ -949,10 +1090,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
     if (isTouch && isPalmRejectionActive && isStylusDetected) {
       isPanningRef.current = true;
       lastPanPointRef.current = { x: screenX, y: screenY };
+      pointerDownPosRef.current = { x: screenX, y: screenY };
+      hasDraggedRef.current = false;
       return;
     }
 
-    // Start drawing (with stylus or touch)
+    // Start drawing (with stylus or touch when a pen tool is selected)
     isDrawingRef.current = true;
     activePointerIdRef.current = e.pointerId;
 
@@ -1036,6 +1179,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
     if (isPanningRef.current) {
       const dx = screenX - lastPanPointRef.current.x;
       const dy = screenY - lastPanPointRef.current.y;
+      if (Math.hypot(screenX - pointerDownPosRef.current.x, screenY - pointerDownPosRef.current.y) > 6) {
+        hasDraggedRef.current = true;
+      }
       setViewport((prev) => {
         const nextV = { ...prev, x: prev.x + dx, y: prev.y + dy };
         viewportRef.current = nextV;
@@ -1111,6 +1257,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     if (isPanningRef.current) {
       isPanningRef.current = false;
+      const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
+      if (!hasDraggedRef.current && !isPenTool) {
+        handleCanvasTapToType(e.clientX, e.clientY);
+      }
       return;
     }
 
@@ -1139,7 +1289,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
               }
               return true;
             });
-            pushHistory(filtered, thoughtsRef.current);
+            pushHistory(filtered, thoughtsRef.current, canvasTextsRef.current);
             return filtered;
           });
         } else {
@@ -1155,7 +1305,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
           const nextStrokes = [...strokes, newStroke];
           setStrokes(nextStrokes);
-          pushHistory(nextStrokes, thoughtsRef.current);
+          pushHistory(nextStrokes, thoughtsRef.current, canvasTextsRef.current);
         }
       }
 
@@ -1197,6 +1347,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Keyboard Shortcuts (Undo, Redo, Save, Pan)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         if (e.shiftKey) handleRedo();
         else handleUndo();
@@ -1209,6 +1362,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
       if (e.key === ' ' && currentTool === 'pan') {
         setCurrentTool('pen');
       }
@@ -1222,6 +1378,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
     };
   }, [handleUndo, handleRedo, handleSaveProject, currentTool]);
 
+  const activeTextItem = activeTextId ? canvasTexts.find((t) => t.id === activeTextId) : null;
+  const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
+
   return (
     <div
       ref={containerRef}
@@ -1230,57 +1389,45 @@ export const InfiniteStylusCanvas: React.FC = () => {
       {/* Top Notification Toast */}
       <TopToast message={toastMessage} />
 
-      {/* S-Pen / Stylus Palm Rejection Mode Badge (Optimized for Samsung & Stylus Screens) */}
+      {/* Mode Indicator & S-Pen Palm Rejection Badge (Optimized for Samsung & Stylus Screens) */}
       <div className="fixed top-3 left-3 z-30 flex items-center gap-2 pointer-events-auto">
         <button
           type="button"
           onClick={() => {
-            setIsPalmRejectionActive((prev) => {
-              const next = !prev;
-              showToast(
-                next
-                  ? 'Palm Rejection: ON (Only S-Pen draws, palm ignored)'
-                  : 'Palm Rejection: OFF (Finger + Stylus both draw)'
-              );
-              return next;
-            });
+            if (isPenTool) {
+              setCurrentTool('pan');
+              showToast('Switched to Move & Type Mode (1-Finger Drag)');
+            } else {
+              setCurrentTool('pen');
+              showToast('Switched to Pen Mode (Stylus & Drawing)');
+            }
           }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium backdrop-blur-md transition-all shadow-sm select-none border active:scale-95 ${
-            isStylusDetected
-              ? isPalmRejectionActive
-                ? 'bg-neutral-900/90 text-white border-neutral-700/60 shadow-[0_2px_10px_rgba(0,0,0,0.18)]'
-                : 'bg-white/90 text-neutral-700 border-neutral-200/80 hover:bg-white'
-              : isPalmRejectionActive
-              ? 'bg-white/90 text-neutral-700 border-neutral-200/80 hover:bg-white'
-              : 'bg-white/70 text-neutral-400 border-neutral-200/60'
+            isPenTool
+              ? 'bg-neutral-900/90 text-white border-neutral-700/60 shadow-[0_2px_10px_rgba(0,0,0,0.18)]'
+              : 'bg-white/95 text-neutral-800 border-neutral-200/90 shadow-sm hover:bg-white'
           }`}
-          title="Toggle Palm Rejection mode"
+          title="Click to toggle between Move & Type and Pen Mode"
         >
-          {isStylusDetected ? (
-            isPalmRejectionActive ? (
+          {isPenTool ? (
+            isStylusDetected ? (
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             ) : (
-              <Hand className="w-3.5 h-3.5 text-amber-500" />
+              <PenTool className="w-3.5 h-3.5 text-indigo-400" />
             )
           ) : (
-            <PenTool className="w-3.5 h-3.5 text-neutral-500" />
+            <Hand className="w-3.5 h-3.5 text-amber-500" />
           )}
           <span>
-            {isStylusDetected
-              ? isPalmRejectionActive
-                ? 'S-Pen • Palm Rejection ON'
-                : 'S-Pen • Touch Draw ON'
-              : isPalmRejectionActive
-              ? 'Stylus Mode (Palm Reject)'
-              : 'Touch + Pen Mode'}
+            {isPenTool
+              ? isStylusDetected
+                ? 'Pen Mode • S-Pen Active'
+                : 'Pen Mode (Stylus Active)'
+              : 'Move & Type • 1-Finger Drag'}
           </span>
           <span
             className={`w-1.5 h-1.5 rounded-full ${
-              isStylusDetected
-                ? isPalmRejectionActive
-                  ? 'bg-emerald-400 animate-pulse'
-                  : 'bg-amber-400'
-                : 'bg-neutral-300'
+              isPenTool ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
             }`}
           />
         </button>
@@ -1302,6 +1449,57 @@ export const InfiniteStylusCanvas: React.FC = () => {
         style={{ touchAction: 'none' }}
       />
 
+      {/* Active typing block on canvas with the normal beeping vertical blinking cursor */}
+      {activeTextItem && (
+        <div
+          id="canvas-active-text-wrapper"
+          style={{
+            position: 'absolute',
+            left: viewport.x + activeTextItem.x * viewport.zoom,
+            top: viewport.y + activeTextItem.y * viewport.zoom,
+            zIndex: 25,
+            pointerEvents: 'auto',
+          }}
+        >
+          <div className="relative inline-block">
+            <textarea
+              ref={activeInputRef}
+              value={activeTextItem.text}
+              onChange={(e) => handleUpdateActiveText(e.target.value)}
+              onBlur={handleBlurActiveText}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  handleBlurActiveText();
+                }
+              }}
+              rows={Math.max(1, activeTextItem.text.split('\n').length)}
+              placeholder=""
+              autoFocus
+              className="resize-none overflow-hidden bg-transparent border-none outline-none p-0 m-0 whitespace-pre-wrap select-text cursor-text"
+              style={{
+                fontFamily: '"Kalam", "Caveat", cursive',
+                fontSize: `${22 * viewport.zoom}px`,
+                lineHeight: `${32 * viewport.zoom}px`,
+                color: activeTextItem.color || currentColor || '#1E1E1E',
+                caretColor: '#1E1E1E',
+                width: `${Math.max(180, Math.min(windowDimensions.width - 60, (activeTextItem.text.length + 4) * 14)) * viewport.zoom}px`,
+                minWidth: `${160 * viewport.zoom}px`,
+                maxWidth: `${Math.min(720, windowDimensions.width - 40)}px`,
+              }}
+            />
+            {/* The normal blinking vertical line when empty */}
+            {activeTextItem.text.length === 0 && (
+              <span
+                className="pointer-events-none absolute left-0 top-0 inline-block w-[2.5px] bg-neutral-900 animate-caret"
+                style={{
+                  height: `${28 * viewport.zoom}px`,
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sentence Highlight & Copy Overlay */}
       <SentenceCopyOverlay
         selectedSentences={selectedSentences}
@@ -1320,19 +1518,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onFocusThought={handleFocusThought}
       />
 
-      {/* Conversational Mode Floating Bar */}
-      <ConversationalAssistantBar
-        isActive={isConversationalActive}
-        isThinking={thoughts.some((t) => t.status === 'thinking')}
-        onSend={(msg) => triggerAssistantResponse(undefined, msg)}
-        onClose={() => {
-          setIsConversationalActive(false);
-          showToast('Conversation ended. All thoughts saved.');
-        }}
-        hasCanvasInk={strokes.length > 0}
-        onRespondToInk={() => triggerAssistantResponse(undefined, 'Respond to and continue my handwritten notes on the canvas.')}
-      />
-
       {/* Liquid Bottom Dock (Draggable in any direction, swipeable tools) */}
       <LiquidBottomDock
         currentTool={currentTool}
@@ -1349,17 +1534,17 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onRedo={handleRedo}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < history.length - 1}
-        onExportPDF={() => exportCanvasToPDF(strokes, thoughts, activeProject?.title || 'Note')}
+        onExportPDF={() => exportCanvasToPDF(strokes, thoughts, canvasTexts, activeProject?.title || 'Note')}
         onExportPNG={async () => {
-          const url = await exportCanvasToImage(strokes, thoughts);
+          const url = await exportCanvasToImage(strokes, thoughts, canvasTexts);
           const a = document.createElement('a');
           a.href = url;
           a.download = `stylus-canvas-${Date.now()}.png`;
           a.click();
           showToast('PNG Exported');
         }}
-        onTriggerAssistant={handleToggleConversational}
-        isConversationalActive={isConversationalActive}
+        onTriggerAssistant={handleTriggerAssistant}
+        isConversationalActive={false}
         isAssistantThinking={thoughts.some((t) => t.status === 'thinking')}
         isOffline={isOffline}
       />

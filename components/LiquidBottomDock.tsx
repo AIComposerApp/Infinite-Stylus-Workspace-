@@ -19,6 +19,7 @@ import {
   GripHorizontal,
   FileText,
   Image as ImageIcon,
+  Hand,
 } from 'lucide-react';
 import { StylusToolType } from '@/types/canvas';
 
@@ -91,8 +92,9 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   const [isHolding, setIsHolding] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
-  // 10 base tools in sequence
+  // Base tools in sequence
   const toolDefinitions = [
+    { id: 'pan', label: 'Move & Type', type: 'tool', tool: 'pan' as StylusToolType },
     { id: 'pen', label: 'Fountain Pen', type: 'tool', tool: 'pen' as StylusToolType },
     { id: 'pencil', label: 'Graphite Pencil', type: 'tool', tool: 'pencil' as StylusToolType },
     { id: 'highlighter', label: 'Highlighter', type: 'tool', tool: 'highlighter' as StylusToolType },
@@ -229,7 +231,11 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
     }
 
     if (type === 'tool' && toolName) {
-      onSelectTool(toolName);
+      if (currentTool === toolName && toolName !== 'pan') {
+        onSelectTool('pan');
+      } else {
+        onSelectTool(toolName);
+      }
     } else if (type === 'color') {
       setShowColorPicker((prev) => !prev);
       setShowExportMenu(false);
@@ -249,6 +255,23 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   const renderToolButton = (item: (typeof toolDefinitions)[0], keySuffix: string | number) => {
     const key = `${item.id}-${keySuffix}`;
     const isSelected = item.type === 'tool' && currentTool === item.tool;
+
+    if (item.id === 'pan') {
+      return (
+        <button
+          key={key}
+          onClick={() => handleItemClick('tool', 'pan')}
+          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
+            isSelected
+              ? 'bg-black/15 text-black font-semibold shadow-xs'
+              : 'text-[#444444] hover:bg-black/5 hover:text-black'
+          }`}
+          title="Move & Type Anywhere (1-Finger Drag)"
+        >
+          <Hand className="w-4 h-4" strokeWidth={1.8} />
+        </button>
+      );
+    }
 
     if (item.id === 'pen') {
       return (
@@ -405,19 +428,11 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
         <button
           key={key}
           onClick={() => handleItemClick('assistant')}
-          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all active:scale-95 shrink-0 select-none ${
-            isConversationalActive
-              ? 'bg-neutral-950 ring-2 ring-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.35)] scale-105'
-              : 'bg-black hover:bg-neutral-800'
-          } ${isAssistantThinking ? 'ring-2 ring-neutral-400 animate-pulse' : ''}`}
-          title={isConversationalActive ? 'Conversational Mode Active (Click to End)' : 'Start AI Conversation'}
+          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all active:scale-95 shrink-0 select-none bg-black hover:bg-neutral-800 ${
+            isAssistantThinking ? 'ring-2 ring-neutral-400 animate-pulse' : ''
+          }`}
+          title="AI Assistant (Organic handwriting answers overlapping your text)"
         >
-          {isConversationalActive && (
-            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 ring-2 ring-white" />
-            </span>
-          )}
           <Image
             src="/icons/ai-assistant-white-64.png"
             alt="AI Assistant"

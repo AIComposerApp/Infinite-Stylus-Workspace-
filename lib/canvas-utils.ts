@@ -1,4 +1,4 @@
-import { Point, Stroke, AIThought, ThoughtSentence, ThoughtSentenceLine, Viewport, ProjectNote } from '@/types/canvas';
+import { Point, Stroke, AIThought, ThoughtSentence, ThoughtSentenceLine, Viewport, ProjectNote, CanvasTextItem } from '@/types/canvas';
 import { jsPDF } from 'jspdf';
 
 // Calculate bounds for a set of points
@@ -358,12 +358,13 @@ export function getOffScreenBubblePosition(
 export async function exportCanvasToImage(
   strokes: Stroke[],
   thoughts: AIThought[],
+  canvasTexts: CanvasTextItem[] = [],
   options: { padding?: number; background?: string } = {}
 ): Promise<string> {
   const padding = options.padding ?? 60;
   const bgColor = options.background ?? '#FAF9F6';
 
-  if (strokes.length === 0 && thoughts.length === 0) {
+  if (strokes.length === 0 && thoughts.length === 0 && canvasTexts.length === 0) {
     // Empty canvas default size
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
@@ -391,6 +392,13 @@ export async function exportCanvasToImage(
     minY = Math.min(minY, t.bounds.minY);
     maxX = Math.max(maxX, t.bounds.maxX);
     maxY = Math.max(maxY, t.bounds.maxY);
+  }
+
+  for (const ct of canvasTexts) {
+    minX = Math.min(minX, ct.x);
+    minY = Math.min(minY, ct.y);
+    maxX = Math.max(maxX, ct.x + 300);
+    maxY = Math.max(maxY, ct.y + 100);
   }
 
   const width = Math.max(600, maxX - minX + padding * 2);
@@ -424,11 +432,24 @@ export async function exportCanvasToImage(
     drawSmoothStroke(ctx, stroke);
   }
 
-  // Draw thoughts text in handwriting style
-  ctx.fillStyle = '#222222';
+  // Draw user typed canvas texts in exact same handwriting style
+  ctx.fillStyle = '#1E1E1E';
   ctx.font = '22px "Kalam", "Caveat", cursive';
+  ctx.textBaseline = 'top';
+  for (const ct of canvasTexts) {
+    if (ct.text) {
+      const lines = ct.text.split('\n');
+      let lineY = ct.y;
+      for (const line of lines) {
+        ctx.fillText(line, ct.x, lineY);
+        lineY += 32;
+      }
+    }
+  }
 
+  // Draw thoughts text in handwriting style
   for (const thought of thoughts) {
+    ctx.fillStyle = thought.color || '#222222';
     if (thought.sentences && thought.sentences.length > 0) {
       for (const sentence of thought.sentences) {
         if (sentence.lines && sentence.lines.length > 0) {
@@ -457,9 +478,10 @@ export async function exportCanvasToImage(
 export async function exportCanvasToPDF(
   strokes: Stroke[],
   thoughts: AIThought[],
+  canvasTexts: CanvasTextItem[] = [],
   title: string = 'Stylus Workspace Note'
 ): Promise<void> {
-  const dataUrl = await exportCanvasToImage(strokes, thoughts);
+  const dataUrl = await exportCanvasToImage(strokes, thoughts, canvasTexts);
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'px',

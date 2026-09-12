@@ -69,6 +69,16 @@ export interface Viewport {
   zoom: number;
 }
 
+export interface CanvasTextItem {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  color?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ProjectNote {
   id: string;
   title: string;
@@ -77,6 +87,7 @@ export interface ProjectNote {
   isPinned: boolean;
   strokes: Stroke[];
   thoughts: AIThought[];
+  canvasTexts?: CanvasTextItem[];
   viewport: Viewport;
   previewThumbnail?: string;
 }
