@@ -120,13 +120,14 @@ const SwipeableProjectItem: React.FC<SwipeableProjectItemProps> = ({
         style={{ x }}
         drag="x"
         dragConstraints={{ left: -180, right: 180 }}
-        dragElastic={0.4}
+        dragElastic={0.2}
         dragTransition={{ bounceStiffness: 400, bounceDamping: 25 }}
         onDragEnd={handleDragEnd}
+        onTap={onSelect}
         onClick={onSelect}
-        className={`relative z-10 px-4 py-3.5 bg-white/95 backdrop-blur-sm border transition-colors cursor-grab active:cursor-grabbing ${
+        className={`relative z-10 px-4 py-3.5 bg-white/95 backdrop-blur-sm border transition-colors cursor-pointer active:cursor-grabbing ${
           isActive
-            ? 'border-black/25 bg-[#FAF9F6] shadow-xs'
+            ? 'border-black/30 bg-[#FAF9F6] shadow-sm'
             : 'border-black/5 hover:bg-neutral-50/90'
         }`}
       >
@@ -145,14 +146,26 @@ const SwipeableProjectItem: React.FC<SwipeableProjectItemProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-col items-end shrink-0 gap-1">
+          <div className="flex flex-col items-end shrink-0 gap-1.5">
             <span className="text-[10px] text-neutral-400 font-mono flex items-center gap-1">
               <Clock className="w-2.5 h-2.5" />
               {dateStr}
             </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-100 text-neutral-600 font-medium">
-              {project.strokes.length} strokes
-            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect();
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                isActive
+                  ? 'bg-neutral-900 text-white'
+                  : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+              }`}
+            >
+              <span>{isActive ? 'Active' : 'Open'}</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
           </div>
         </div>
       </motion.div>

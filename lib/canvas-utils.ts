@@ -21,6 +21,140 @@ export function calculateStrokeBounds(points: Point[]): { minX: number; minY: nu
   return { minX, minY, maxX, maxY };
 }
 
+// Calculate exact visual bounds for a typed or pasted text item, taking line-wrapping into account
+export function calculateCanvasTextBounds(
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number = 720,
+  lineHeight: number = 32,
+  charWidthApprox: number = 11.5
+): { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } {
+  if (!text || !text.trim()) {
+    return { minX: x, minY: y, maxX: x + 100, maxY: y + lineHeight, width: 100, height: lineHeight };
+  }
+
+  const rawLines = text.split('\n');
+  let currentY = y;
+  let maxW = 0;
+
+  for (const rLine of rawLines) {
+    if (!rLine) {
+      currentY += lineHeight;
+      continue;
+    }
+    const words = rLine.split(/\s+/);
+    let currentLine = words[0] || '';
+
+    for (let w = 1; w < words.length; w++) {
+      const testLine = `${currentLine} ${words[w]}`;
+      if (testLine.length * charWidthApprox > maxWidth && currentLine.length > 0) {
+        maxW = Math.max(maxW, currentLine.length * charWidthApprox);
+        currentY += lineHeight;
+        currentLine = words[w];
+      } else {
+        currentLine = testLine;
+      }
+    }
+
+    if (currentLine.length > 0) {
+      maxW = Math.max(maxW, currentLine.length * charWidthApprox);
+      currentY += lineHeight;
+    }
+  }
+
+  const finalWidth = Math.min(maxWidth, Math.max(80, maxW));
+  const finalHeight = Math.max(lineHeight, currentY - y);
+
+  return {
+    minX: x,
+    minY: y,
+    maxX: x + finalWidth,
+    maxY: y + finalHeight,
+    width: finalWidth,
+    height: finalHeight,
+  };
+}
+
+// Find a completely non-overlapping spawn point for AI assistant response, regardless of text length
+export function findCollisionFreeAssistantSpawn(
+  targetText: CanvasTextItem | null,
+  canvasTexts: CanvasTextItem[],
+  thoughts: AIThought[],
+  strokes: Stroke[],
+  fallbackCenter: { x: number; y: number }
+): { x: number; y: number } {
+  let spawnX = fallbackCenter.x - 120;
+  let spawnY = fallbackCenter.y - 40;
+
+  if (targetText && targetText.text && targetText.text.trim()) {
+    const targetBounds = calculateCanvasTextBounds(targetText.text, targetText.x, targetText.y);
+    spawnX = targetText.x;
+    let candidateY = targetBounds.maxY + 36; // Generous breathing room below the text
+
+    // Check against any other canvas items that lie below or around this horizontal band [spawnX - 40, spawnX + 760]
+    const bandLeft = spawnX - 40;
+    const bandRight = spawnX + 760;
+
+    // Check all other canvas texts
+    for (const item of canvasTexts) {
+      if (item.id === targetText.id || !item.text || !item.text.trim()) continue;
+      const b = calculateCanvasTextBounds(item.text, item.x, item.y);
+      const horizontalOverlap = !(b.maxX < bandLeft || b.minX > bandRight);
+      if (horizontalOverlap && b.maxY >= candidateY - 10 && b.minY <= candidateY + 320) {
+        candidateY = Math.max(candidateY, b.maxY + 36);
+      }
+    }
+
+    // Check thoughts
+    for (const th of thoughts) {
+      if (!th.bounds) continue;
+      const horizontalOverlap = !(th.bounds.maxX < bandLeft || th.bounds.minX > bandRight);
+      if (horizontalOverlap && th.bounds.maxY >= candidateY - 10 && th.bounds.minY <= candidateY + 320) {
+        candidateY = Math.max(candidateY, th.bounds.maxY + 36);
+      }
+    }
+
+    // Check strokes
+    for (const st of strokes) {
+      if (!st.bounds) continue;
+      const horizontalOverlap = !(st.bounds.maxX < bandLeft || st.bounds.minX > bandRight);
+      if (horizontalOverlap && st.bounds.maxY >= candidateY - 10 && st.bounds.minY <= candidateY + 320) {
+        candidateY = Math.max(candidateY, st.bounds.maxY + 36);
+      }
+    }
+
+    spawnY = candidateY;
+  } else {
+    // If no target text, check the lowest completed element
+    let lowestY = -Infinity;
+    let refX = spawnX;
+
+    for (const item of canvasTexts) {
+      if (!item.text || !item.text.trim()) continue;
+      const b = calculateCanvasTextBounds(item.text, item.x, item.y);
+      if (b.maxY > lowestY) {
+        lowestY = b.maxY;
+        refX = b.minX;
+      }
+    }
+
+    for (const th of thoughts) {
+      if (th.bounds && th.bounds.maxY > lowestY) {
+        lowestY = th.bounds.maxY;
+        refX = th.bounds.minX;
+      }
+    }
+
+    if (lowestY > -Infinity) {
+      spawnX = refX;
+      spawnY = lowestY + 40;
+    }
+  }
+
+  return { x: spawnX, y: spawnY };
+}
+
 // Smooth natural stroke drawing with pressure sensitivity and Bezier interpolation
 export function drawSmoothStroke(
   ctx: CanvasRenderingContext2D,
@@ -438,9 +572,30 @@ export async function exportCanvasToImage(
   ctx.textBaseline = 'top';
   for (const ct of canvasTexts) {
     if (ct.text) {
-      const lines = ct.text.split('\n');
+      const rawLines = ct.text.split('\n');
+      const maxLineWidth = 720;
+      const wrappedLines: string[] = [];
+      for (const rLine of rawLines) {
+        if (!rLine) {
+          wrappedLines.push('');
+          continue;
+        }
+        const words = rLine.split(' ');
+        let currentLine = words[0] || '';
+        for (let w = 1; w < words.length; w++) {
+          const testLine = `${currentLine} ${words[w]}`;
+          if (ctx.measureText(testLine).width > maxLineWidth) {
+            wrappedLines.push(currentLine);
+            currentLine = words[w];
+          } else {
+            currentLine = testLine;
+          }
+        }
+        wrappedLines.push(currentLine);
+      }
+
       let lineY = ct.y;
-      for (const line of lines) {
+      for (const line of wrappedLines) {
         ctx.fillText(line, ct.x, lineY);
         lineY += 32;
       }

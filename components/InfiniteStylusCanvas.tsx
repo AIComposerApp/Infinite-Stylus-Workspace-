@@ -23,7 +23,10 @@ import {
   autoSaveSingleProject,
   loadActiveProjectId,
   saveActiveProjectId,
+  calculateCanvasTextBounds,
+  findCollisionFreeAssistantSpawn,
 } from '@/lib/canvas-utils';
+import { generateOfflineAssistantThought } from '@/lib/offline-intelligence';
 import { LiquidBottomDock } from '@/components/LiquidBottomDock';
 import { ThoughtBubbleOffScreen } from '@/components/ThoughtBubbleOffScreen';
 import { ProjectsDrawer } from '@/components/ProjectsDrawer';
@@ -255,13 +258,14 @@ export const InfiniteStylusCanvas: React.FC = () => {
   }, []);
 
   // Compute off-screen thought bubble position dynamically
+  // ONLY shows while the assistant is actively thinking or writing!
   const offScreenBubble = useMemo(() => {
     if (!activeThoughtId) {
       return { visible: false, screenX: 0, screenY: 0, angleRad: 0, targetCanvasX: 0, targetCanvasY: 0 };
     }
 
     const thought = thoughts.find((t) => t.id === activeThoughtId);
-    if (!thought) {
+    if (!thought || (thought.status !== 'thinking' && thought.status !== 'writing')) {
       return { visible: false, screenX: 0, screenY: 0, angleRad: 0, targetCanvasX: 0, targetCanvasY: 0 };
     }
 
@@ -321,33 +325,79 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Switch Active Project
   const handleSelectProject = useCallback(
     (id: string) => {
-      handleSaveProject();
+      // 1. Immediately flush & save current project
+      if (activeProjectIdRef.current) {
+        autoSaveSingleProject({
+          id: activeProjectIdRef.current,
+          title: activeProjectRef.current?.title || 'Note',
+          createdAt: activeProjectRef.current?.createdAt || Date.now(),
+          updatedAt: Date.now(),
+          isPinned: activeProjectRef.current?.isPinned || false,
+          strokes: strokesRef.current,
+          thoughts: thoughtsRef.current,
+          canvasTexts: canvasTextsRef.current,
+          viewport: viewportRef.current,
+        });
+      }
 
-      const target = projects.find((p) => p.id === id);
+      // 2. Fetch fresh projects directly from storage & state
+      const allProjects = loadSavedProjects();
+      const target = allProjects.find((p) => p.id === id) || projects.find((p) => p.id === id);
+
       if (target) {
+        const loadedStrokes = target.strokes || [];
+        const loadedThoughts = target.thoughts || [];
+        const loadedCanvasTexts = target.canvasTexts || [];
+        const loadedViewport = target.viewport || { x: 200, y: 150, zoom: 1 };
+
         setActiveProjectId(target.id);
+        activeProjectIdRef.current = target.id;
+        activeProjectRef.current = target;
         saveActiveProjectId(target.id);
-        setStrokes(target.strokes || []);
-        setThoughts(target.thoughts || []);
-        setCanvasTexts(target.canvasTexts || []);
-        setViewport(target.viewport || { x: 200, y: 150, zoom: 1 });
-        setHistory([{ strokes: target.strokes || [], thoughts: target.thoughts || [], canvasTexts: target.canvasTexts || [] }]);
+
+        strokesRef.current = loadedStrokes;
+        thoughtsRef.current = loadedThoughts;
+        canvasTextsRef.current = loadedCanvasTexts;
+        viewportRef.current = loadedViewport;
+
+        setStrokes(loadedStrokes);
+        setThoughts(loadedThoughts);
+        setCanvasTexts(loadedCanvasTexts);
+        setViewport(loadedViewport);
+
+        setHistory([{ strokes: loadedStrokes, thoughts: loadedThoughts, canvasTexts: loadedCanvasTexts }]);
         setHistoryIndex(0);
         setSelectedSentences([]);
         setActiveThoughtId(null);
         setActiveTextId(null);
+        setCurrentTool('pan');
+        showToast(`Opened: ${target.title}`);
       }
     },
-    [projects, handleSaveProject]
+    [projects, showToast]
   );
 
   // New Project
   const handleNewProject = useCallback(() => {
-    handleSaveProject();
+    if (activeProjectIdRef.current) {
+      autoSaveSingleProject({
+        id: activeProjectIdRef.current,
+        title: activeProjectRef.current?.title || 'Note',
+        createdAt: activeProjectRef.current?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        isPinned: activeProjectRef.current?.isPinned || false,
+        strokes: strokesRef.current,
+        thoughts: thoughtsRef.current,
+        canvasTexts: canvasTextsRef.current,
+        viewport: viewportRef.current,
+      });
+    }
+
+    const currentList = loadSavedProjects();
     const newId = `proj-${Date.now()}`;
     const newNote: ProjectNote = {
       id: newId,
-      title: `Idea Stream ${projects.length + 1}`,
+      title: `Idea Stream ${currentList.length + 1}`,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       isPinned: false,
@@ -357,11 +407,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
       viewport: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150, zoom: 1 },
     };
 
-    const updated = [newNote, ...projects];
+    const updated = [newNote, ...currentList];
     setProjects(updated);
     saveProjectsToStorage(updated);
+
     setActiveProjectId(newId);
+    activeProjectIdRef.current = newId;
+    activeProjectRef.current = newNote;
     saveActiveProjectId(newId);
+
+    strokesRef.current = [];
+    thoughtsRef.current = [];
+    canvasTextsRef.current = [];
+    viewportRef.current = newNote.viewport;
+
     setStrokes([]);
     setThoughts([]);
     setCanvasTexts([]);
@@ -371,8 +430,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
     setSelectedSentences([]);
     setActiveThoughtId(null);
     setActiveTextId(null);
+    setCurrentTool('pan');
     showToast('New board ready');
-  }, [projects, handleSaveProject, showToast]);
+  }, [showToast]);
 
   // Pin Project
   const handlePinProject = useCallback((id: string) => {
@@ -485,6 +545,43 @@ export const InfiniteStylusCanvas: React.FC = () => {
     [viewport]
   );
 
+  // Support pasting copied text from outside at any time directly onto the canvas
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      // If user is currently typing in an active input/textarea, allow native browser paste inside the input!
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const pastedText = e.clipboardData?.getData('text/plain');
+      if (!pastedText || !pastedText.trim()) return;
+
+      e.preventDefault();
+
+      // Paste at center of current view
+      const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
+      const newTextId = `text-pasted-${Date.now()}`;
+      const newItem: CanvasTextItem = {
+        id: newTextId,
+        text: pastedText,
+        x: Math.round(center.x - 140),
+        y: Math.round(center.y - 40),
+        color: currentColor || '#1E1E1E',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const updatedTexts = [...canvasTextsRef.current, newItem];
+      setCanvasTexts(updatedTexts);
+      canvasTextsRef.current = updatedTexts;
+      pushHistory(strokesRef.current, thoughtsRef.current, updatedTexts);
+      showToast('Pasted note to canvas');
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [screenToCanvas, currentColor, pushHistory, showToast]);
+
   // Jump/Focus to Thought
   const handleFocusThought = useCallback(() => {
     if (!offScreenBubble.targetCanvasX) return;
@@ -501,43 +598,36 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Trigger AI Assistant (Brainstorm response in organic handwriting with sequential readable fade-in)
   const triggerAssistantResponse = useCallback(
     async (targetPoint?: { x: number; y: number }, customPrompt?: string) => {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        showToast('Offline: Assistant needs internet. Notes are safely saved.');
-        return;
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+
+      const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
+      const textsWithContent = canvasTextsRef.current.filter((t) => t.text && t.text.trim());
+      const activeTextItem = activeTextId
+        ? canvasTextsRef.current.find((t) => t.id === activeTextId && t.text.trim())
+        : null;
+      const targetText = activeTextItem || (textsWithContent.length > 0 ? textsWithContent[textsWithContent.length - 1] : null);
+
+      if (!customPrompt && targetText) {
+        customPrompt = targetText.text;
       }
 
-      let spawnX = targetPoint?.x;
-      let spawnY = targetPoint?.y;
+      // Calculate mathematically guaranteed collision-free spawn position that accounts for long wrapped text
+      const freeSpawn = findCollisionFreeAssistantSpawn(
+        targetText,
+        canvasTextsRef.current,
+        thoughtsRef.current,
+        strokesRef.current,
+        center
+      );
 
-      if (spawnX === undefined || spawnY === undefined) {
-        // Priority 1: Check active or latest typed text on canvas to OVERLAP existing text!
-        const textsWithContent = canvasTextsRef.current.filter((t) => t.text && t.text.trim());
-        const activeTextItem = activeTextId
-          ? canvasTextsRef.current.find((t) => t.id === activeTextId && t.text.trim())
-          : null;
-        const targetText = activeTextItem || (textsWithContent.length > 0 ? textsWithContent[textsWithContent.length - 1] : null);
+      let spawnX = targetPoint?.x !== undefined ? targetPoint.x : freeSpawn.x;
+      let spawnY = targetPoint?.y !== undefined ? targetPoint.y : freeSpawn.y;
 
-        if (targetText) {
-          spawnX = targetText.x;
-          spawnY = targetText.y;
-          if (!customPrompt) {
-            customPrompt = targetText.text;
-          }
-        } else {
-          const completedThoughts = thoughtsRef.current.filter((t) => t.text && t.text.trim());
-          if (completedThoughts.length > 0) {
-            const lastThought = completedThoughts[completedThoughts.length - 1];
-            spawnX = lastThought.x;
-            spawnY = lastThought.bounds.maxY + 36;
-          } else if (strokesRef.current.length > 0) {
-            const lastStroke = strokesRef.current[strokesRef.current.length - 1];
-            spawnX = lastStroke.bounds.minX;
-            spawnY = lastStroke.bounds.maxY + 36;
-          } else {
-            const center = screenToCanvas(window.innerWidth / 2, window.innerHeight / 2);
-            spawnX = center.x - 120;
-            spawnY = center.y - 40;
-          }
+      // If a target point was explicitly provided, ensure it still clears the full visual height of targetText
+      if (targetText && targetText.text && targetText.text.trim()) {
+        const tBounds = calculateCanvasTextBounds(targetText.text, targetText.x, targetText.y);
+        if (spawnY < tBounds.maxY + 24) {
+          spawnY = tBounds.maxY + 36;
         }
       }
 
@@ -561,7 +651,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         text: '',
         sentences: [],
         revealedCount: 0,
-        color: currentColor === '#1E1E1E' ? '#1E3A8A' : currentColor, // Deep Indigo ink for organic contrast when overlapping text
+        color: currentColor === '#1E1E1E' ? '#1E3A8A' : currentColor,
         fontFamily: 'Kalam',
         createdAt: Date.now(),
         lastUpdated: Date.now(),
@@ -570,7 +660,14 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
       setThoughts((prev) => [...prev, newThought]);
       setActiveThoughtId(thoughtId);
-      showToast('Assistant writing in ink...');
+
+      if (isOffline) {
+        showToast('Assistant writing (On-Device Offline Mode)...');
+      } else {
+        showToast('Assistant pondering thought...');
+      }
+
+      const requestStartTime = Date.now();
 
       // Gather ongoing conversation and canvas notes context
       const conversationHistory = thoughtsRef.current
@@ -583,87 +680,82 @@ export const InfiniteStylusCanvas: React.FC = () => {
       const thoughtsContext = thoughtsRef.current.map((t) => t.text).join(' \n ');
       const contextSnippet = `${textNotesContext}\n${thoughtsContext}`.trim();
 
-      try {
-        const res = await fetch('/api/gemini/assist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: customPrompt || (conversationHistory.length > 0 ? 'Continue this note thought.' : 'Expand on my current notes and continue organic brainstorming.'),
-            canvasContext: contextSnippet,
-            conversationHistory,
-          }),
-        });
+      let textResult = '';
 
-        const data = await res.json();
-        const textResult = data.text || data.fallbackText || 'Continuing this thread: explore core structures, intuitive flow, and organic tactile clarity.';
-
-        const layout = layoutHandwrittenText(textResult, spawnX, spawnY);
-        const writingStartTime = Date.now();
-
-        setThoughts((prev) =>
-          prev.map((t) =>
-            t.id === thoughtId
-              ? {
-                  ...t,
-                  status: 'writing' as const,
-                  text: textResult,
-                  sentences: layout.sentences,
-                  bounds: layout.totalBounds,
-                  revealedCount: textResult.length,
-                  writingStartTime,
-                }
-              : t
-          )
-        );
-
-        // Sequential fade-in timing: sentences smoothly reveal one by one over ~900ms per sentence
-        const totalWritingDuration = Math.max(1400, (layout.sentences.length - 1) * 900 + 750);
-        setTimeout(() => {
-          setThoughts((prev) => {
-            const updated = prev.map((t) =>
-              t.id === thoughtId ? { ...t, status: 'completed' as const } : t
-            );
-            pushHistory(strokesRef.current, updated, canvasTextsRef.current);
-            return updated;
+      if (!isOffline) {
+        try {
+          const res = await fetch('/api/gemini/assist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: customPrompt || (conversationHistory.length > 0 ? 'Continue this note thought.' : 'Expand on my current notes and continue organic brainstorming.'),
+              canvasContext: contextSnippet,
+              conversationHistory,
+            }),
           });
-        }, totalWritingDuration);
-      } catch (err) {
-        console.error('AI assistant error:', err);
-        const fallbackText = 'Connecting ideas: tactile feedback, infinite scale, and seamless continuity.';
-        const fallbackLayout = layoutHandwrittenText(fallbackText, spawnX, spawnY);
-        const writingStartTime = Date.now();
 
-        setThoughts((prev) =>
-          prev.map((t) =>
-            t.id === thoughtId
-              ? {
-                  ...t,
-                  status: 'writing' as const,
-                  text: fallbackText,
-                  sentences: fallbackLayout.sentences,
-                  bounds: fallbackLayout.totalBounds,
-                  revealedCount: fallbackText.length,
-                  writingStartTime,
-                }
-              : t
-          )
-        );
-
-        setTimeout(() => {
-          setThoughts((prev) => {
-            const updated = prev.map((t) =>
-              t.id === thoughtId ? { ...t, status: 'completed' as const } : t
-            );
-            pushHistory(strokesRef.current, updated, canvasTextsRef.current);
-            return updated;
-          });
-        }, 1500);
+          if (res.ok) {
+            const data = await res.json();
+            textResult = data.text || data.fallbackText || '';
+          }
+        } catch (netErr) {
+          console.warn('Network assist call failed, falling back to on-device offline intelligence:', netErr);
+        }
       }
+
+      // If offline or network request failed, seamlessly invoke on-device offline intelligence!
+      if (!textResult || !textResult.trim()) {
+        const offlineRes = await generateOfflineAssistantThought(
+          customPrompt || (conversationHistory.length > 0 ? 'Continue this note thought.' : 'Expand on notes.'),
+          contextSnippet
+        );
+        textResult = offlineRes.text;
+      }
+
+      // Natural human contemplation pause before picking up the pen to write
+      const elapsedSinceRequest = Date.now() - requestStartTime;
+      const remainingThinkingTime = Math.max(0, 2400 - elapsedSinceRequest);
+      if (remainingThinkingTime > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remainingThinkingTime));
+      }
+
+      const layout = layoutHandwrittenText(textResult, spawnX, spawnY);
+      const writingStartTime = Date.now();
+
+      setThoughts((prev) =>
+        prev.map((t) =>
+          t.id === thoughtId
+            ? {
+                ...t,
+                status: 'writing' as const,
+                text: textResult,
+                sentences: layout.sentences,
+                bounds: layout.totalBounds,
+                revealedCount: textResult.length,
+                writingStartTime,
+              }
+            : t
+        )
+      );
+
+      // Sequential fade-in timing: sentences smoothly reveal one by one at a calm, readable pace (~1900ms per sentence)
+      const totalWritingDuration = Math.max(2400, (layout.sentences.length - 1) * 1900 + 1600);
+      setTimeout(() => {
+        setThoughts((prev) => {
+          const updated = prev.map((t) =>
+            t.id === thoughtId ? { ...t, status: 'completed' as const } : t
+          );
+          pushHistory(strokesRef.current, updated, canvasTextsRef.current);
+          return updated;
+        });
+        // When done typing, dismiss the active thought bubble
+        setActiveThoughtId((prev) => (prev === thoughtId ? null : prev));
+      }, totalWritingDuration);
     },
     [currentColor, screenToCanvas, showToast, pushHistory, activeTextId]
   );
 
-  // Trigger AI Assistant directly from dock or shortcut (overlaps existing text!)
+  // Trigger AI Assistant directly from dock or shortcut (placed cleanly below existing text)
   const handleTriggerAssistant = useCallback(() => {
     const textsWithContent = canvasTextsRef.current.filter((t) => t.text && t.text.trim());
     const activeTextItem = activeTextId
@@ -672,7 +764,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     const targetText = activeTextItem || (textsWithContent.length > 0 ? textsWithContent[textsWithContent.length - 1] : null);
 
     if (targetText) {
-      triggerAssistantResponse({ x: targetText.x, y: targetText.y }, targetText.text);
+      triggerAssistantResponse(undefined, targetText.text);
     } else {
       triggerAssistantResponse();
     }
@@ -717,6 +809,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         const cleaned = canvasTextsRef.current.filter((t) => t.text && t.text.trim().length > 0);
         const updated = [...cleaned, newItem];
         setCanvasTexts(updated);
+        canvasTextsRef.current = updated;
         pushHistory(strokesRef.current, thoughtsRef.current, updated);
         setActiveTextId(newId);
 
@@ -732,9 +825,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const handleUpdateActiveText = useCallback(
     (newText: string) => {
       if (!activeTextId) return;
-      setCanvasTexts((prev) =>
-        prev.map((t) => (t.id === activeTextId ? { ...t, text: newText, updatedAt: Date.now() } : t))
-      );
+      setCanvasTexts((prev) => {
+        const updated = prev.map((t) => (t.id === activeTextId ? { ...t, text: newText, updatedAt: Date.now() } : t));
+        canvasTextsRef.current = updated;
+        return updated;
+      });
     },
     [activeTextId]
   );
@@ -747,6 +842,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       if (activeItem && !activeItem.text.trim()) {
         updated = prev.filter((t) => t.id !== activeTextId);
       }
+      canvasTextsRef.current = updated;
       pushHistory(strokesRef.current, thoughtsRef.current, updated);
       return updated;
     });
@@ -884,7 +980,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
     }
 
-    // 2.5 Draw Typed Canvas Text Items (in the exact same handwriting font Kalam/Caveat)
+    // 2.5 Draw Typed Canvas Text Items (in the exact same handwriting font Kalam/Caveat with line wrapping)
     for (const item of canvasTexts) {
       if (item.id === activeTextId) continue; // Rendered live in textarea overlay with blinking cursor
       if (!item.text || !item.text.trim()) continue;
@@ -894,9 +990,30 @@ export const InfiniteStylusCanvas: React.FC = () => {
       ctx.fillStyle = item.color || '#1E1E1E';
       ctx.textBaseline = 'top';
 
-      const lines = item.text.split('\n');
+      const rawLines = item.text.split('\n');
+      const maxLineWidth = 720;
+      const wrappedLines: string[] = [];
+      for (const rLine of rawLines) {
+        if (!rLine) {
+          wrappedLines.push('');
+          continue;
+        }
+        const words = rLine.split(' ');
+        let currentLine = words[0] || '';
+        for (let w = 1; w < words.length; w++) {
+          const testLine = `${currentLine} ${words[w]}`;
+          if (ctx.measureText(testLine).width > maxLineWidth) {
+            wrappedLines.push(currentLine);
+            currentLine = words[w];
+          } else {
+            currentLine = testLine;
+          }
+        }
+        wrappedLines.push(currentLine);
+      }
+
       const lineHeight = 32;
-      lines.forEach((line, index) => {
+      wrappedLines.forEach((line, index) => {
         ctx.fillText(line, item.x, item.y + index * lineHeight);
       });
       ctx.restore();
@@ -933,7 +1050,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
         for (let sIdx = 0; sIdx < thought.sentences.length; sIdx++) {
           const sentence = thought.sentences[sIdx];
-          const sentenceDelay = sIdx * 900; // 900ms stagger between sentences for readable, sequential fade-in
+          const sentenceDelay = sIdx * 1900; // 1.9s calm stagger between sentences for thoughtful, sequential readability
           const elapsed = now - (startTime + sentenceDelay);
 
           if (thought.status === 'writing' && elapsed < 0) {
@@ -945,11 +1062,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
           let offsetY = 0;
 
           if (thought.status === 'writing') {
-            const fadeProgress = Math.min(1, Math.max(0, elapsed / 700)); // 700ms smooth fade-in
+            const fadeProgress = Math.min(1, Math.max(0, elapsed / 1300)); // 1.3s gentle organic ink fade-in
             // Smooth ease-out quad
             const eased = 1 - Math.pow(1 - fadeProgress, 2);
             alpha = Math.max(0.04, eased * 0.94);
-            offsetY = (1 - eased) * 4; // subtle 4px float into place
+            offsetY = (1 - eased) * 5; // subtle 5px float into place
           }
 
           ctx.save();
@@ -1449,7 +1566,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         style={{ touchAction: 'none' }}
       />
 
-      {/* Active typing block on canvas with the normal beeping vertical blinking cursor */}
+      {/* Active typing block on canvas with single native vertical blinking cursor */}
       {activeTextItem && (
         <div
           id="canvas-active-text-wrapper"
@@ -1482,20 +1599,11 @@ export const InfiniteStylusCanvas: React.FC = () => {
                 lineHeight: `${32 * viewport.zoom}px`,
                 color: activeTextItem.color || currentColor || '#1E1E1E',
                 caretColor: '#1E1E1E',
-                width: `${Math.max(180, Math.min(windowDimensions.width - 60, (activeTextItem.text.length + 4) * 14)) * viewport.zoom}px`,
-                minWidth: `${160 * viewport.zoom}px`,
-                maxWidth: `${Math.min(720, windowDimensions.width - 40)}px`,
+                width: `${Math.max(220, Math.min(1100, (Math.max(...activeTextItem.text.split('\n').map((l) => l.length), 8) + 4) * 14)) * viewport.zoom}px`,
+                minWidth: `${180 * viewport.zoom}px`,
+                maxWidth: 'min(1200px, 92vw)',
               }}
             />
-            {/* The normal blinking vertical line when empty */}
-            {activeTextItem.text.length === 0 && (
-              <span
-                className="pointer-events-none absolute left-0 top-0 inline-block w-[2.5px] bg-neutral-900 animate-caret"
-                style={{
-                  height: `${28 * viewport.zoom}px`,
-                }}
-              />
-            )}
           </div>
         </div>
       )}
