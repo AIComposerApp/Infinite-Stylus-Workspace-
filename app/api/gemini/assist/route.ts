@@ -17,6 +17,8 @@ const CANDIDATE_MODELS = [
   "gemini-flash-latest",
 ];
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function generateWithFallback(options: {
   contents: any;
   systemInstruction: string;
@@ -41,9 +43,20 @@ async function generateWithFallback(options: {
       }
     } catch (err: any) {
       lastError = err;
-      const statusCode = err?.status || err?.code;
-      console.warn(`Model ${model} temporarily unavailable (status: ${statusCode}), trying fallback...`);
-      // If 503, 429, or capacity error, continue to next candidate model
+      let statusCode = err?.status || err?.code;
+      let errMsg = typeof err?.message === "string" ? err.message : "";
+      try {
+        const parsed = JSON.parse(errMsg);
+        if (parsed?.error?.status) statusCode = parsed.error.status;
+        if (parsed?.error?.code) statusCode = parsed.error.code;
+        if (parsed?.error?.message) errMsg = parsed.error.message;
+      } catch (_) {}
+
+      // If temporary busy (503 / 429), brief pause before fallback
+      const isTemporaryBusy = statusCode === 503 || statusCode === 429 || statusCode === "UNAVAILABLE" || errMsg.includes("high demand");
+      if (isTemporaryBusy) {
+        await sleep(350);
+      }
       continue;
     }
   }

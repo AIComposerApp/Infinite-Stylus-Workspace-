@@ -74,7 +74,73 @@ export interface CanvasTextItem {
   text: string;
   x: number;
   y: number;
+  width?: number;
+  height?: number;
+  fontSize?: number;
   color?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CanvasImageItem {
+  id: string;
+  src: string; // base64 or URL
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  aspectRatio?: number;
+  name?: string;
+  caption?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export type ShapeType =
+  | 'rectangle'
+  | 'rounded-rectangle'
+  | 'circle'
+  | 'triangle'
+  | 'star'
+  | 'diamond'
+  | 'line'
+  | 'arrow'
+  | 'sticky-note';
+
+export interface CanvasShapeItem {
+  id: string;
+  type: ShapeType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  strokeColor: string;
+  strokeWidth: number;
+  fillColor: string;
+  text?: string;
+  textColor?: string;
+  fontSize?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CanvasChecklistEntry {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+export interface CanvasChecklistItem {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  items: CanvasChecklistEntry[];
+  hideCompleted: boolean;
+  themeColor?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -88,6 +154,9 @@ export interface ProjectNote {
   strokes: Stroke[];
   thoughts: AIThought[];
   canvasTexts?: CanvasTextItem[];
+  images?: CanvasImageItem[];
+  shapes?: CanvasShapeItem[];
+  checklists?: CanvasChecklistItem[];
   viewport: Viewport;
   previewThumbnail?: string;
 }

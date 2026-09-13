@@ -76,14 +76,14 @@ export const SentenceCopyOverlay: React.FC<SentenceCopyOverlayProps> = ({
           }}
           exit={{ opacity: 0, scale: 0.85 }}
           transition={{ type: 'spring', stiffness: 450, damping: 28 }}
-          className="fixed top-0 left-0 pointer-events-auto flex items-center gap-1.5 p-1 bg-white/95 backdrop-blur-md rounded-full border border-black/10 shadow-xl"
+          className="fixed top-0 left-0 pointer-events-auto flex items-center gap-1.5 p-1 bg-[#18181B] text-white rounded-full border border-neutral-700/80 shadow-2xl"
         >
           <button
             onClick={onCopy}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               isCopied
-                ? 'bg-emerald-600 text-white'
-                : 'bg-neutral-900 text-white hover:bg-black'
+                ? 'bg-neutral-700 text-white'
+                : 'bg-neutral-800 text-white hover:bg-neutral-700'
             }`}
             title="Copy as plain text"
           >
@@ -104,7 +104,7 @@ export const SentenceCopyOverlay: React.FC<SentenceCopyOverlayProps> = ({
 
           <button
             onClick={onClearSelection}
-            className="p-1.5 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-black/5 transition-colors"
+            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
             title="Deselect"
           >
             <X className="w-3.5 h-3.5" strokeWidth={1.8} />

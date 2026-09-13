@@ -1,4 +1,16 @@
-import { Point, Stroke, AIThought, ThoughtSentence, ThoughtSentenceLine, Viewport, ProjectNote, CanvasTextItem } from '@/types/canvas';
+import {
+  Point,
+  Stroke,
+  AIThought,
+  ThoughtSentence,
+  ThoughtSentenceLine,
+  Viewport,
+  ProjectNote,
+  CanvasTextItem,
+  CanvasImageItem,
+  CanvasShapeItem,
+  CanvasChecklistItem,
+} from '@/types/canvas';
 import { jsPDF } from 'jspdf';
 
 // Calculate bounds for a set of points
@@ -488,17 +500,210 @@ export function getOffScreenBubblePosition(
   };
 }
 
+// Draw vector shapes, lines, arrows, and sticky notes
+export function drawCanvasShape(ctx: CanvasRenderingContext2D, shape: CanvasShapeItem) {
+  const { type, x, y, width, height, strokeColor, strokeWidth, fillColor, text, textColor, fontSize = 18 } = shape;
+  ctx.save();
+  ctx.strokeStyle = strokeColor || '#1E1E1E';
+  ctx.lineWidth = Math.max(1, strokeWidth || 2);
+  ctx.fillStyle = fillColor || 'transparent';
+
+  if (type === 'rectangle') {
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'rounded-rectangle') {
+    ctx.beginPath();
+    const radius = Math.min(16, Math.min(Math.abs(width), Math.abs(height)) / 4);
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(x, y, width, height, radius);
+    } else {
+      ctx.rect(x, y, width, height);
+    }
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'circle') {
+    ctx.beginPath();
+    ctx.ellipse(x + width / 2, y + height / 2, Math.abs(width / 2), Math.abs(height / 2), 0, 0, Math.PI * 2);
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'triangle') {
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'diamond') {
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height / 2);
+    ctx.lineTo(x + width / 2, y + height);
+    ctx.lineTo(x, y + height / 2);
+    ctx.closePath();
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'star') {
+    const cx = x + width / 2;
+    const cy = y + height / 2;
+    const spikes = 5;
+    const outerRadius = Math.min(Math.abs(width), Math.abs(height)) / 2;
+    const innerRadius = outerRadius * 0.44;
+    let rot = (Math.PI / 2) * 3;
+    const step = Math.PI / spikes;
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - outerRadius);
+    for (let i = 0; i < spikes; i++) {
+      let sx = cx + Math.cos(rot) * outerRadius;
+      let sy = cy + Math.sin(rot) * outerRadius;
+      ctx.lineTo(sx, sy);
+      rot += step;
+
+      sx = cx + Math.cos(rot) * innerRadius;
+      sy = cy + Math.sin(rot) * innerRadius;
+      ctx.lineTo(sx, sy);
+      rot += step;
+    }
+    ctx.lineTo(cx, cy - outerRadius);
+    ctx.closePath();
+    if (fillColor && fillColor !== 'transparent') ctx.fill();
+    if (strokeWidth > 0) ctx.stroke();
+  } else if (type === 'line') {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + width, y + height);
+    ctx.stroke();
+  } else if (type === 'arrow') {
+    const fromX = x;
+    const fromY = y;
+    const toX = x + width;
+    const toY = y + height;
+    const headlen = Math.min(22, Math.max(12, Math.hypot(width, height) * 0.2));
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+
+    // Arrowhead
+    ctx.beginPath();
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(toX - headlen * Math.cos(angle - Math.PI / 6), toY - headlen * Math.sin(angle - Math.PI / 6));
+    ctx.lineTo(toX - headlen * Math.cos(angle + Math.PI / 6), toY - headlen * Math.sin(angle + Math.PI / 6));
+    ctx.closePath();
+    ctx.fillStyle = strokeColor || '#1E1E1E';
+    ctx.fill();
+  } else if (type === 'sticky-note') {
+    // Sticky note with soft shadow & folded corner paper look
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = fillColor || '#FEF08A';
+    ctx.beginPath();
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(x, y, width, height, 4);
+    } else {
+      ctx.rect(x, y, width, height);
+    }
+    ctx.fill();
+    ctx.restore();
+
+    ctx.strokeStyle = strokeColor || 'rgba(0, 0, 0, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Top paper tape indicator
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.04)';
+    ctx.fillRect(x, y, width, Math.min(18, height * 0.12));
+  }
+
+  // Draw text if present (for sticky notes or labeled shapes)
+  if (text && text.trim()) {
+    ctx.font = `${fontSize}px "Kalam", "Caveat", cursive`;
+    ctx.fillStyle = textColor || (fillColor === '#18181B' ? '#FFFFFF' : '#1E1E1E');
+
+    const isSticky = type === 'sticky-note';
+    const paddingX = isSticky ? 14 : Math.max(12, Math.abs(width) * 0.1);
+    const maxTextW = Math.max(30, Math.abs(width) - paddingX * 2);
+    const rawParagraphs = text.split('\n');
+    const wrappedLines: string[] = [];
+
+    for (const rawLine of rawParagraphs) {
+      if (!rawLine.trim()) {
+        wrappedLines.push('');
+        continue;
+      }
+      const words = rawLine.split(' ');
+      let lineBuf = '';
+      for (let w = 0; w < words.length; w++) {
+        const testLine = lineBuf ? `${lineBuf} ${words[w]}` : words[w];
+        if (ctx.measureText(testLine).width > maxTextW && lineBuf) {
+          wrappedLines.push(lineBuf);
+          lineBuf = words[w];
+        } else {
+          lineBuf = testLine;
+        }
+      }
+      if (lineBuf) wrappedLines.push(lineBuf);
+    }
+
+    const lineH = fontSize * 1.32;
+    const totalTextH = wrappedLines.length * lineH;
+
+    if (isSticky) {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      let curY = y + 22;
+      for (const line of wrappedLines) {
+        if (line) ctx.fillText(line, x + paddingX, curY);
+        curY += lineH;
+        if (curY > y + height - 10) break;
+      }
+    } else {
+      // Geometric shapes: cleanly centered horizontally & vertically
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const startY = y + height / 2 - totalTextH / 2 + lineH / 2;
+      const centerX = x + width / 2;
+      for (let i = 0; i < wrappedLines.length; i++) {
+        const line = wrappedLines[i];
+        const lineY = startY + i * lineH;
+        if (lineY >= y + 6 && lineY <= y + height - 6) {
+          if (line) ctx.fillText(line, centerX, lineY);
+        }
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
 // Export canvas contents as high-resolution PNG image
 export async function exportCanvasToImage(
   strokes: Stroke[],
   thoughts: AIThought[],
   canvasTexts: CanvasTextItem[] = [],
+  images: CanvasImageItem[] = [],
+  shapes: CanvasShapeItem[] = [],
+  checklists: CanvasChecklistItem[] = [],
   options: { padding?: number; background?: string } = {}
 ): Promise<string> {
   const padding = options.padding ?? 60;
   const bgColor = options.background ?? '#FAF9F6';
 
-  if (strokes.length === 0 && thoughts.length === 0 && canvasTexts.length === 0) {
+  if (
+    strokes.length === 0 &&
+    thoughts.length === 0 &&
+    canvasTexts.length === 0 &&
+    images.length === 0 &&
+    shapes.length === 0 &&
+    checklists.length === 0
+  ) {
     // Empty canvas default size
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
@@ -531,8 +736,53 @@ export async function exportCanvasToImage(
   for (const ct of canvasTexts) {
     minX = Math.min(minX, ct.x);
     minY = Math.min(minY, ct.y);
-    maxX = Math.max(maxX, ct.x + 300);
-    maxY = Math.max(maxY, ct.y + 100);
+    maxX = Math.max(maxX, ct.x + (ct.width || 300));
+    maxY = Math.max(maxY, ct.y + (ct.height || 100));
+  }
+
+  for (const img of images) {
+    minX = Math.min(minX, img.x);
+    minY = Math.min(minY, img.y);
+    maxX = Math.max(maxX, img.x + img.width);
+    maxY = Math.max(maxY, img.y + img.height);
+  }
+
+  for (const sh of shapes) {
+    minX = Math.min(minX, Math.min(sh.x, sh.x + sh.width));
+    minY = Math.min(minY, Math.min(sh.y, sh.y + sh.height));
+    maxX = Math.max(maxX, Math.max(sh.x, sh.x + sh.width));
+    maxY = Math.max(maxY, Math.max(sh.y, sh.y + sh.height));
+  }
+
+  for (const ch of checklists) {
+    const cardW = ch.width || 300;
+    const itemsCount = ch.hideCompleted
+      ? ch.items.filter((i) => !i.completed).length
+      : ch.items.length;
+    const cardH = 50 + itemsCount * 28;
+    minX = Math.min(minX, ch.x);
+    minY = Math.min(minY, ch.y);
+    maxX = Math.max(maxX, ch.x + cardW);
+    maxY = Math.max(maxY, ch.y + cardH);
+  }
+
+  // Pre-load all images asynchronously
+  const loadedImages: { item: CanvasImageItem; element: HTMLImageElement }[] = [];
+  if (images.length > 0) {
+    await Promise.all(
+      images.map((img) => {
+        return new Promise<void>((resolve) => {
+          const el = new Image();
+          el.crossOrigin = 'anonymous';
+          el.onload = () => {
+            loadedImages.push({ item: img, element: el });
+            resolve();
+          };
+          el.onerror = () => resolve();
+          el.src = img.src;
+        });
+      })
+    );
   }
 
   const width = Math.max(600, maxX - minX + padding * 2);
@@ -561,19 +811,31 @@ export async function exportCanvasToImage(
   ctx.save();
   ctx.translate(-minX + padding, -minY + padding);
 
-  // Draw strokes
+  // 1. Draw shapes & sticky notes (bottom layer)
+  for (const shape of shapes) {
+    drawCanvasShape(ctx, shape);
+  }
+
+  // 2. Draw images
+  for (const { item, element } of loadedImages) {
+    try {
+      ctx.drawImage(element, item.x, item.y, item.width, item.height);
+    } catch (_) {}
+  }
+
+  // 3. Draw strokes
   for (const stroke of strokes) {
     drawSmoothStroke(ctx, stroke);
   }
 
-  // Draw user typed canvas texts in exact same handwriting style
+  // 4. Draw user typed canvas texts in exact same handwriting style
   ctx.fillStyle = '#1E1E1E';
   ctx.font = '22px "Kalam", "Caveat", cursive';
   ctx.textBaseline = 'top';
   for (const ct of canvasTexts) {
     if (ct.text) {
       const rawLines = ct.text.split('\n');
-      const maxLineWidth = 720;
+      const maxLineWidth = ct.width || 720;
       const wrappedLines: string[] = [];
       for (const rLine of rawLines) {
         if (!rLine) {
@@ -602,7 +864,7 @@ export async function exportCanvasToImage(
     }
   }
 
-  // Draw thoughts text in handwriting style
+  // 5. Draw thoughts text in handwriting style
   for (const thought of thoughts) {
     ctx.fillStyle = thought.color || '#222222';
     if (thought.sentences && thought.sentences.length > 0) {
@@ -625,6 +887,53 @@ export async function exportCanvasToImage(
     }
   }
 
+  // 6. Draw checklists (dark theme card)
+  for (const ch of checklists) {
+    const cardW = ch.width || 300;
+    const itemsToDraw = ch.hideCompleted
+      ? ch.items.filter((i) => !i.completed)
+      : ch.items;
+    const cardH = 46 + Math.max(1, itemsToDraw.length) * 26 + 12;
+
+    ctx.save();
+    ctx.fillStyle = '#18181B';
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(ch.x, ch.y, cardW, cardH, 12);
+    } else {
+      ctx.rect(ch.x, ch.y, cardW, cardH);
+    }
+    ctx.fill();
+
+    // Card border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Title
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(ch.title || 'Checklist', ch.x + 16, ch.y + 16);
+
+    // Items
+    ctx.font = '12px system-ui, -apple-system, sans-serif';
+    let itemY = ch.y + 40;
+    for (const itm of itemsToDraw) {
+      // Checkbox box
+      ctx.strokeStyle = itm.completed ? '#10B981' : '#71717A';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(ch.x + 16, itemY, 12, 12);
+      if (itm.completed) {
+        ctx.fillStyle = '#10B981';
+        ctx.fillRect(ch.x + 16, itemY, 12, 12);
+      }
+
+      ctx.fillStyle = itm.completed ? '#71717A' : '#F4F4F5';
+      ctx.fillText(itm.text, ch.x + 36, itemY + 2);
+      itemY += 26;
+    }
+    ctx.restore();
+  }
+
   ctx.restore();
   return canvas.toDataURL('image/png');
 }
@@ -634,9 +943,12 @@ export async function exportCanvasToPDF(
   strokes: Stroke[],
   thoughts: AIThought[],
   canvasTexts: CanvasTextItem[] = [],
+  images: CanvasImageItem[] = [],
+  shapes: CanvasShapeItem[] = [],
+  checklists: CanvasChecklistItem[] = [],
   title: string = 'Stylus Workspace Note'
 ): Promise<void> {
-  const dataUrl = await exportCanvasToImage(strokes, thoughts, canvasTexts);
+  const dataUrl = await exportCanvasToImage(strokes, thoughts, canvasTexts, images, shapes, checklists);
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'px',
@@ -663,6 +975,9 @@ function getDefaultProjects(): ProjectNote[] {
       isPinned: true,
       strokes: [],
       thoughts: [],
+      canvasTexts: [],
+      images: [],
+      shapes: [],
       viewport: { x: 200, y: 150, zoom: 1 },
     },
   ];

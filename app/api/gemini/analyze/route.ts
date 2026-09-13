@@ -10,6 +10,7 @@ const ai = new GoogleGenAI({
   },
 });
 
+// Candidate models in preference order
 const CANDIDATE_MODELS = [
   "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
@@ -21,15 +22,16 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { imageBase64 } = body;
+    const { imageBase64, prompt, mode = "describe" } = body;
 
     if (!imageBase64) {
       return NextResponse.json(
-        { error: "Image base64 required" },
+        { error: "Image data is required" },
         { status: 400 }
       );
     }
 
+    // Extract exact MIME type and clean base64 data
     let mimeType = "image/png";
     let cleanBase64 = imageBase64;
 
@@ -45,10 +47,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Normalize standard MIME types
     if (mimeType === "image/jpg") {
       mimeType = "image/jpeg";
     } else if (mimeType.includes("svg")) {
       mimeType = "image/png";
+    }
+
+    let systemInstruction = "You are an expert visual intelligence and analysis engine for a creative brainstorming and note-taking canvas.";
+    let userPrompt = prompt;
+
+    if (mode === "ocr") {
+      systemInstruction = "You are a high-precision OCR and handwriting transcription engine. Extract and transcribe all visible text, handwriting, annotations, and labels accurately. Present the text clearly formatted without extraneous chit-chat.";
+      userPrompt = prompt || "Extract and transcribe all text and handwriting visible in this image verbatim.";
+    } else if (mode === "brainstorm") {
+      systemInstruction = "You are a creative brainstorming partner. Analyze this image and extract inspiring ideas, follow-up concepts, structured action steps, and creative connections suitable for a project canvas.";
+      userPrompt = prompt || "Brainstorm key concepts, creative insights, and practical next steps based on this image.";
+    } else if (mode === "describe") {
+      systemInstruction = "You are a visual analyst. Provide a clear, concise, structured breakdown of what is shown in the image, noting key objects, visual context, diagrams, charts, or diagrams.";
+      userPrompt = prompt || "Analyze and describe the contents, style, and key elements in this image.";
+    } else {
+      userPrompt = prompt || "Analyze this image and answer any questions thoroughly.";
     }
 
     let outputText = "";
@@ -66,12 +85,13 @@ export async function POST(req: NextRequest) {
               },
             },
             {
-              text: `You are an OCR and handwriting transcription engine. Read the handwriting in the image accurately and return ONLY the exact text written. Do not add markdown or conversational preamble. If words include "assistant" followed by a query or note, extract the exact text.`,
+              text: userPrompt,
             },
           ],
           config: {
-            temperature: 0.1,
-            maxOutputTokens: 300,
+            systemInstruction,
+            temperature: mode === "ocr" ? 0.1 : 0.4,
+            maxOutputTokens: 600,
           },
         });
 
@@ -80,6 +100,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({
             text: outputText,
             model,
+            mode,
           });
         }
       } catch (err: any) {
@@ -93,25 +114,38 @@ export async function POST(req: NextRequest) {
           if (parsed?.error?.message) errMsg = parsed.error.message;
         } catch (_) {}
 
+        // Temporary capacity spike or rate limit (503 / 429) -> brief delay before fallback
         const isTemporaryBusy = statusCode === 503 || statusCode === 429 || statusCode === "UNAVAILABLE" || errMsg.includes("high demand");
         if (isTemporaryBusy) {
-          await sleep(350);
+          await sleep(400);
         }
         continue;
       }
     }
 
+    // Graceful fallback if external model is temporarily at capacity
+    let fallbackText = "";
+    if (mode === "ocr") {
+      fallbackText = "Image captured on canvas. Note: Vision AI is currently experiencing peak demand. You can re-run OCR shortly, or continue annotating directly on the canvas.";
+    } else if (mode === "brainstorm") {
+      fallbackText = "Canvas Brainstorm Note:\n1. Deconstruct core visual elements into distinct modules.\n2. Identify relationships and workflow dependencies.\n3. Link connected sketches with directional arrows.";
+    } else {
+      fallbackText = "Visual asset imported into workspace. Tap AI Vision again to re-analyze once demand eases.";
+    }
+
     return NextResponse.json({
-      text: outputText || "Handwritten text captured on canvas.",
+      text: fallbackText,
+      model: "fallback",
       fallback: true,
+      mode,
       note: lastError?.message ? "Model capacity fallback" : undefined,
     });
   } catch (error: any) {
     return NextResponse.json(
       {
-        text: "Handwriting recorded on canvas.",
+        text: "Visual element noted on canvas. Ready for sketching and annotation.",
         fallback: true,
-        error: error?.message || "Failed to transcribe handwriting",
+        error: error?.message || "Failed to analyze image",
       },
       { status: 200 }
     );
