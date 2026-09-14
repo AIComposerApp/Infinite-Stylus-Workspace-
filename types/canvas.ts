@@ -5,7 +5,7 @@ export interface Point {
   time?: number;
 }
 
-export type StylusToolType = 'pen' | 'pencil' | 'highlighter' | 'eraser' | 'select' | 'pan';
+export type StylusToolType = 'pen' | 'pencil' | 'highlighter' | 'eraser' | 'select' | 'pan' | 'text' | 'connector';
 
 export interface Stroke {
   id: string;
@@ -145,6 +145,30 @@ export interface CanvasChecklistItem {
   updatedAt: number;
 }
 
+export type ConnectorAnchorSide = 'top' | 'right' | 'bottom' | 'left';
+export type ArrowDirection = 'end' | 'both' | 'none';
+
+export interface CanvasConnectorEndpoint {
+  itemId?: string;
+  itemType?: 'image' | 'shape' | 'text' | 'checklist';
+  side?: ConnectorAnchorSide;
+  x: number;
+  y: number;
+}
+
+export interface CanvasConnectorItem {
+  id: string;
+  from: CanvasConnectorEndpoint;
+  to: CanvasConnectorEndpoint;
+  label?: string;
+  color?: string;
+  width?: number;
+  style?: 'curved' | 'orthogonal' | 'straight';
+  arrowHead?: ArrowDirection;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ProjectNote {
   id: string;
   title: string;
@@ -157,6 +181,7 @@ export interface ProjectNote {
   images?: CanvasImageItem[];
   shapes?: CanvasShapeItem[];
   checklists?: CanvasChecklistItem[];
+  connectors?: CanvasConnectorItem[];
   viewport: Viewport;
   previewThumbnail?: string;
 }

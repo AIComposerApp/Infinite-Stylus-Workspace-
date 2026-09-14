@@ -33,6 +33,8 @@ import {
   Diamond,
   Hand,
   ListTodo,
+  Type,
+  Workflow,
 } from 'lucide-react';
 import { StylusToolType, ShapeType } from '@/types/canvas';
 
@@ -131,14 +133,16 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
     { id: 'redo', label: 'Redo', type: 'redo' },
   ];
 
-  // Right tools definitions (Stylus drawing tools, colors, undo/redo, export, assistant)
+  // Right tools definitions (Stylus drawing tools, text, connector, colors, undo/redo, export, assistant)
   const toolDefinitions = [
     { id: 'pan', label: 'Move & Type', type: 'tool', tool: 'pan' as StylusToolType },
+    { id: 'select', label: 'Select & Copy', type: 'tool', tool: 'select' as StylusToolType },
+    { id: 'text', label: 'Type Text (T)', type: 'tool', tool: 'text' as StylusToolType },
+    { id: 'connector', label: 'Flowchart Connector (C)', type: 'tool', tool: 'connector' as StylusToolType },
     { id: 'pen', label: 'Fountain Pen', type: 'tool', tool: 'pen' as StylusToolType },
     { id: 'pencil', label: 'Graphite Pencil', type: 'tool', tool: 'pencil' as StylusToolType },
     { id: 'highlighter', label: 'Highlighter', type: 'tool', tool: 'highlighter' as StylusToolType },
     { id: 'eraser', label: 'Eraser', type: 'tool', tool: 'eraser' as StylusToolType },
-    { id: 'select', label: 'Select & Copy', type: 'tool', tool: 'select' as StylusToolType },
     { id: 'color', label: 'Ink Color & Size', type: 'color' },
     { id: 'undo', label: 'Undo', type: 'undo' },
     { id: 'redo', label: 'Redo', type: 'redo' },
@@ -522,9 +526,43 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
               ? 'bg-black/15 text-black font-semibold shadow-xs'
               : 'text-[#444444] hover:bg-black/5 hover:text-black'
           }`}
-          title="Lasso Selection Tool"
+          title="Select & Move (V)"
         >
           <LassoSelect className="w-4 h-4" strokeWidth={1.8} />
+        </button>
+      );
+    }
+
+    if (item.id === 'text') {
+      return (
+        <button
+          key={key}
+          onClick={() => handleItemClick('tool', 'text')}
+          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
+            isSelected
+              ? 'bg-black/15 text-black font-semibold shadow-xs'
+              : 'text-[#444444] hover:bg-black/5 hover:text-black'
+          }`}
+          title="Type Text Anywhere (T) • Double-click canvas"
+        >
+          <Type className="w-4 h-4" strokeWidth={1.8} />
+        </button>
+      );
+    }
+
+    if (item.id === 'connector') {
+      return (
+        <button
+          key={key}
+          onClick={() => handleItemClick('tool', 'connector')}
+          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
+            isSelected
+              ? 'bg-blue-100 text-blue-800 font-semibold shadow-xs'
+              : 'text-[#444444] hover:bg-black/5 hover:text-black'
+          }`}
+          title="Curvy Flowchart Connector (C)"
+        >
+          <Workflow className="w-4 h-4" strokeWidth={1.8} />
         </button>
       );
     }
@@ -804,12 +842,12 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
           className="hidden"
         />
 
-        {/* Dock Card Body */}
+        {/* Unified Liquid Dock Container */}
         <div
           id="liquid-dock"
-          className="relative flex items-center gap-1 sm:gap-1.5 p-1 sm:p-1.5 rounded-full backdrop-blur-2xl border border-black/[0.09] shadow-[0_16px_45px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.04)] bg-white/95 transition-all duration-300 overflow-visible"
+          className="flex items-center gap-0.5 sm:gap-1 p-1 sm:p-1.5 rounded-full backdrop-blur-2xl border border-black/[0.08] shadow-[0_12px_36px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.03)] bg-white/95 transition-all duration-300 overflow-visible"
         >
-          {/* Subtle Dock Reposition Grip Handle (Only this moves the entire dock) */}
+          {/* Subtle Dock Reposition Grip Handle */}
           <div
             onPointerDown={(e) => dockDragControls.start(e)}
             className="flex items-center justify-center w-4 sm:w-5 h-9 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing px-0.5 touch-none shrink-0"
@@ -862,27 +900,25 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
             </div>
           </div>
 
-          {/* EXACT DOCK CENTERPIECE: The Main Dark Icon (Pinned in center between left and right ribbons) */}
-          <div className="flex items-center justify-center mx-1 sm:mx-1.5 shrink-0 z-20">
-            <button
-              id="btn-dock-main-center"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('recenter-canvas'));
-              }}
-              className="flex items-center justify-center p-0.5 cursor-pointer select-none group active:scale-95 transition-transform"
-              title="Infinite Stylus Canvas — Tap to recenter view"
-            >
-              <Image
-                src="/icons/dock-main-dark-128.png"
-                alt="Main Workspace Emblem"
-                width={38}
-                height={38}
-                referrerPolicy="no-referrer"
-                className="w-9 h-9 sm:w-10 sm:h-10 object-contain pointer-events-none select-none group-hover:scale-105 active:scale-95 transition-transform"
-                priority
-              />
-            </button>
-          </div>
+          {/* EXACT DOCK CENTERPIECE: As-is, no round container, clean drop-shadow & scale */}
+          <button
+            id="btn-dock-main-center"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('recenter-canvas'));
+            }}
+            className="relative shrink-0 flex items-center justify-center p-0 m-0 cursor-pointer select-none group active:scale-90 transition-transform outline-none z-30"
+            title="Infinite Stylus Canvas — Tap to recenter view"
+          >
+            <Image
+              src="/icons/dock-main-dark-128.png"
+              alt="Main Workspace Emblem"
+              width={46}
+              height={46}
+              referrerPolicy="no-referrer"
+              className="w-10 h-10 sm:w-11 sm:h-11 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 active:scale-95 drop-shadow-[0_4px_12px_rgba(0,0,0,0.12)]"
+              priority
+            />
+          </button>
 
           {/* RIGHT INFINITE LOOPING RIBBON (Drawing tools, colors, undo/redo, export, assistant) */}
           <div
@@ -946,19 +982,20 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
       <AnimatePresence>
         {showColorPicker && (
           <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.95 }}
-            transition={{ type: 'spring', stiffness: 450, damping: 28 }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-[#18181B] text-white rounded-2xl p-3.5 shadow-2xl border border-neutral-700/80 flex flex-col gap-3 w-[calc(100vw-32px)] max-w-[280px] z-50 pointer-events-auto select-none"
+            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
+            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
+            style={{ transformOrigin: 'bottom center' }}
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-3.5 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-3 w-[calc(100vw-32px)] max-w-[280px] z-50 pointer-events-auto select-none"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+            <div className="flex items-center justify-between pb-1 border-b border-neutral-100">
+              <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
                 Ink Palette
               </span>
               <button
                 onClick={() => setShowColorPicker(false)}
-                className="text-[11px] text-neutral-400 hover:text-white transition-colors"
+                className="text-[11px] text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
               >
                 Done
               </button>
@@ -970,10 +1007,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                   onClick={() => {
                     onSelectColor(c.value);
                   }}
-                  className={`w-6 h-6 rounded-full border transition-transform ${
+                  className={`w-6 h-6 rounded-full border transition-transform cursor-pointer ${
                     currentColor === c.value
-                      ? 'scale-125 ring-2 ring-white border-black'
-                      : 'border-white/20 hover:scale-110'
+                      ? 'scale-125 ring-2 ring-neutral-900 border-white'
+                      : 'border-neutral-300 hover:scale-110'
                   }`}
                   style={{ backgroundColor: c.value }}
                   title={c.label}
@@ -981,8 +1018,8 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
               ))}
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-800">
-              <span className="text-[11px] text-neutral-400 font-medium">Size</span>
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-100">
+              <span className="text-[11px] text-neutral-500 font-medium">Size</span>
               <input
                 type="range"
                 min="1.5"
@@ -990,9 +1027,9 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                 step="0.5"
                 value={strokeWidth}
                 onChange={(e) => onChangeStrokeWidth(parseFloat(e.target.value))}
-                className="w-24 h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-white"
+                className="w-24 h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-neutral-800"
               />
-              <span className="text-xs font-mono text-neutral-200 w-4 text-right">
+              <span className="text-xs font-mono text-neutral-700 w-4 text-right">
                 {strokeWidth}
               </span>
             </div>
@@ -1004,19 +1041,20 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
       <AnimatePresence>
         {showShapesMenu && (
           <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.95 }}
-            transition={{ type: 'spring', stiffness: 450, damping: 28 }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-[#18181B] text-white rounded-2xl p-3.5 shadow-2xl border border-neutral-700/80 flex flex-col gap-2.5 w-[calc(100vw-32px)] max-w-[320px] max-h-[72vh] overflow-y-auto z-50 pointer-events-auto select-none"
+            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
+            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
+            style={{ transformOrigin: 'bottom center' }}
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-3.5 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-2.5 w-[calc(100vw-32px)] max-w-[320px] max-h-[72vh] overflow-y-auto z-50 pointer-events-auto select-none"
           >
-            <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
-              <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+            <div className="flex items-center justify-between pb-1 border-b border-neutral-100">
+              <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
                 Add to Canvas
               </span>
               <button
                 onClick={() => setShowShapesMenu(false)}
-                className="text-[11px] text-neutral-400 hover:text-white transition-colors"
+                className="text-[11px] text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
               >
                 Close
               </button>
@@ -1024,7 +1062,7 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
 
             {/* Sticky Notes */}
             <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wider">
+              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
                 Sticky Notes
               </span>
               <div className="flex items-center justify-between gap-1.5">
@@ -1041,7 +1079,7 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                       onAddShape('sticky-note', '#1E1E1E', note.bg);
                       setShowShapesMenu(false);
                     }}
-                    className="w-8 h-8 rounded-lg shadow-sm border transition-transform hover:scale-110 active:scale-95 flex items-center justify-center text-xs"
+                    className="w-8 h-8 rounded-lg shadow-xs border transition-transform hover:scale-110 active:scale-95 flex items-center justify-center text-xs cursor-pointer"
                     style={{ backgroundColor: note.bg, borderColor: note.border }}
                     title={`Add ${note.label} Sticky Note`}
                   >
@@ -1052,8 +1090,8 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
             </div>
 
             {/* Geometric Shapes */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800">
-              <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wider">
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
+              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
                 Geometric Shapes
               </span>
               <div className="grid grid-cols-3 gap-1.5">
@@ -1062,10 +1100,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('rectangle', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Rectangle"
                 >
-                  <Square className="w-3.5 h-3.5" />
+                  <Square className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Rect</span>
                 </button>
                 <button
@@ -1073,10 +1111,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('rounded-rectangle', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Rounded Rectangle"
                 >
-                  <Square className="w-3.5 h-3.5 rounded-xs" />
+                  <Square className="w-3.5 h-3.5 text-neutral-600 rounded-xs" />
                   <span>Round</span>
                 </button>
                 <button
@@ -1084,10 +1122,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('circle', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Circle"
                 >
-                  <Circle className="w-3.5 h-3.5" />
+                  <Circle className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Circle</span>
                 </button>
                 <button
@@ -1095,10 +1133,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('triangle', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Triangle"
                 >
-                  <Triangle className="w-3.5 h-3.5" />
+                  <Triangle className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Triangle</span>
                 </button>
                 <button
@@ -1106,10 +1144,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('diamond', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Diamond"
                 >
-                  <Diamond className="w-3.5 h-3.5" />
+                  <Diamond className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Diamond</span>
                 </button>
                 <button
@@ -1117,18 +1155,18 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('star', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Star"
                 >
-                  <Star className="w-3.5 h-3.5" />
+                  <Star className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Star</span>
                 </button>
               </div>
             </div>
 
             {/* Lines & Arrows */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800">
-              <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wider">
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
+              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
                 Lines & Connectors
               </span>
               <div className="grid grid-cols-2 gap-1.5">
@@ -1137,10 +1175,10 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('line', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Straight Line"
                 >
-                  <Minus className="w-3.5 h-3.5" />
+                  <Minus className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Line</span>
                 </button>
                 <button
@@ -1148,18 +1186,18 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                     onAddShape('arrow', currentColor, 'transparent');
                     setShowShapesMenu(false);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-200 hover:bg-white/10 hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
                   title="Directional Arrow"
                 >
-                  <MoveRight className="w-3.5 h-3.5" />
+                  <MoveRight className="w-3.5 h-3.5 text-neutral-600" />
                   <span>Arrow</span>
                 </button>
               </div>
             </div>
 
             {/* Checklist Tool */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800">
-              <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wider">
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
+              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
                 Interactive Tasks
               </span>
               <button
@@ -1167,13 +1205,13 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                   onAddChecklist();
                   setShowShapesMenu(false);
                 }}
-                className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-neutral-200 bg-white/5 hover:bg-white/10 hover:text-white transition-colors text-left"
+                className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-neutral-700 bg-neutral-100 hover:bg-neutral-200 hover:text-neutral-900 transition-colors text-left cursor-pointer"
                 title="Add Checklist"
               >
-                <ListTodo className="w-4 h-4 text-emerald-400 shrink-0" />
+                <ListTodo className="w-4 h-4 text-emerald-600 shrink-0" />
                 <div className="flex flex-col min-w-0">
-                  <span className="font-medium text-white">Checklist Card</span>
-                  <span className="text-[10px] text-neutral-400 truncate">Tick, strike out & hide completed</span>
+                  <span className="font-medium text-neutral-900">Checklist Card</span>
+                  <span className="text-[10px] text-neutral-500 truncate">Tick, strike out & hide completed</span>
                 </div>
               </button>
             </div>
@@ -1185,20 +1223,21 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
       <AnimatePresence>
         {showExportMenu && (
           <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.95 }}
-            transition={{ type: 'spring', stiffness: 450, damping: 28 }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-[#18181B] text-white rounded-2xl p-2 shadow-2xl border border-neutral-700/80 flex flex-col gap-1 w-[calc(100vw-32px)] max-w-[240px] z-50 pointer-events-auto select-none"
+            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
+            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
+            style={{ transformOrigin: 'bottom center' }}
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-2 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-1 w-[calc(100vw-32px)] max-w-[240px] z-50 pointer-events-auto select-none"
           >
             <button
               onClick={() => {
                 onExportPNG();
                 setShowExportMenu(false);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-200 hover:bg-white/10 hover:text-white rounded-xl transition-colors font-medium text-left"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
             >
-              <ImageIcon className="w-4 h-4 text-neutral-300" strokeWidth={1.8} />
+              <ImageIcon className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
               <span>Export as PNG Image</span>
             </button>
             <button
@@ -1206,9 +1245,9 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                 onExportPDF();
                 setShowExportMenu(false);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-200 hover:bg-white/10 hover:text-white rounded-xl transition-colors font-medium text-left"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
             >
-              <FileText className="w-4 h-4 text-neutral-300" strokeWidth={1.8} />
+              <FileText className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
               <span>Export as PDF Document</span>
             </button>
             {onExportJSON && (
@@ -1217,9 +1256,9 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                   onExportJSON();
                   setShowExportMenu(false);
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-200 hover:bg-white/10 hover:text-white rounded-xl transition-colors font-medium text-left"
+                className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
               >
-                <Download className="w-4 h-4 text-neutral-300" strokeWidth={1.8} />
+                <Download className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
                 <span>Download Canvas (JSON)</span>
               </button>
             )}

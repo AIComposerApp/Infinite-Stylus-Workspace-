@@ -10,6 +10,9 @@ import {
   CanvasImageItem,
   CanvasShapeItem,
   CanvasChecklistItem,
+  CanvasConnectorItem,
+  CanvasConnectorEndpoint,
+  ConnectorAnchorSide,
 } from '@/types/canvas';
 import { jsPDF } from 'jspdf';
 
@@ -1048,5 +1051,225 @@ export function saveActiveProjectId(id: string) {
   } catch (e) {
     console.warn('Failed to save active project ID:', e);
   }
+}
+
+// -------------------------------------------------------------------------
+// DYNAMIC CURVY FLOWCHART CONNECTOR HELPERS
+// -------------------------------------------------------------------------
+
+export function getItemBoundingBox(
+  itemId: string,
+  images: CanvasImageItem[],
+  shapes: CanvasShapeItem[],
+  canvasTexts: CanvasTextItem[],
+  checklists: CanvasChecklistItem[]
+): { x: number; y: number; width: number; height: number } | null {
+  const shape = shapes.find((s) => s.id === itemId);
+  if (shape) {
+    return {
+      x: Math.min(shape.x, shape.x + shape.width),
+      y: Math.min(shape.y, shape.y + shape.height),
+      width: Math.abs(shape.width),
+      height: Math.abs(shape.height),
+    };
+  }
+  const img = images.find((i) => i.id === itemId);
+  if (img) {
+    return { x: img.x, y: img.y, width: img.width, height: img.height };
+  }
+  const txt = canvasTexts.find((t) => t.id === itemId);
+  if (txt) {
+    const bounds = calculateCanvasTextBounds(txt.text || '', txt.x, txt.y);
+    return { x: txt.x, y: txt.y, width: bounds.width, height: bounds.height };
+  }
+  const chk = checklists.find((c) => c.id === itemId);
+  if (chk) {
+    const w = chk.width || 300;
+    const count = chk.hideCompleted ? chk.items.filter((i) => !i.completed).length : chk.items.length;
+    const h = 46 + Math.max(1, count) * 26 + 12;
+    return { x: chk.x, y: chk.y, width: w, height: h };
+  }
+  return null;
+}
+
+export function getAnchorPointForSide(
+  bounds: { x: number; y: number; width: number; height: number },
+  side: ConnectorAnchorSide
+): { x: number; y: number } {
+  switch (side) {
+    case 'top':
+      return { x: bounds.x + bounds.width / 2, y: bounds.y };
+    case 'right':
+      return { x: bounds.x + bounds.width, y: bounds.y + bounds.height / 2 };
+    case 'bottom':
+      return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height };
+    case 'left':
+      return { x: bounds.x, y: bounds.y + bounds.height / 2 };
+  }
+}
+
+export function resolveConnectorEndpoint(
+  endpoint: CanvasConnectorEndpoint,
+  images: CanvasImageItem[],
+  shapes: CanvasShapeItem[],
+  canvasTexts: CanvasTextItem[],
+  checklists: CanvasChecklistItem[]
+): { x: number; y: number; side?: ConnectorAnchorSide } {
+  if (endpoint.itemId && endpoint.side) {
+    const bounds = getItemBoundingBox(endpoint.itemId, images, shapes, canvasTexts, checklists);
+    if (bounds) {
+      const pt = getAnchorPointForSide(bounds, endpoint.side);
+      return { x: pt.x, y: pt.y, side: endpoint.side };
+    }
+  }
+  return { x: endpoint.x, y: endpoint.y, side: endpoint.side };
+}
+
+export function computeCurvyConnectorControlPoints(
+  p1: { x: number; y: number; side?: ConnectorAnchorSide },
+  p2: { x: number; y: number; side?: ConnectorAnchorSide }
+): { cp1: { x: number; y: number }; cp2: { x: number; y: number } } {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const curvature = Math.max(32, Math.min(220, dist * 0.45));
+
+  const getDir = (side?: ConnectorAnchorSide, fallback: { x: number; y: number } = { x: 1, y: 0 }) => {
+    switch (side) {
+      case 'top': return { x: 0, y: -1 };
+      case 'right': return { x: 1, y: 0 };
+      case 'bottom': return { x: 0, y: 1 };
+      case 'left': return { x: -1, y: 0 };
+      default: return fallback;
+    }
+  };
+
+  const defaultDir1 = Math.abs(dx) > Math.abs(dy) ? { x: Math.sign(dx) || 1, y: 0 } : { x: 0, y: Math.sign(dy) || 1 };
+  const defaultDir2 = { x: -defaultDir1.x, y: -defaultDir1.y };
+
+  const dir1 = getDir(p1.side, defaultDir1);
+  const dir2 = getDir(p2.side, defaultDir2);
+
+  return {
+    cp1: { x: p1.x + dir1.x * curvature, y: p1.y + dir1.y * curvature },
+    cp2: { x: p2.x + dir2.x * curvature, y: p2.y + dir2.y * curvature },
+  };
+}
+
+export function drawCurvyConnector(
+  ctx: CanvasRenderingContext2D,
+  connector: CanvasConnectorItem,
+  images: CanvasImageItem[],
+  shapes: CanvasShapeItem[],
+  canvasTexts: CanvasTextItem[],
+  checklists: CanvasChecklistItem[],
+  isSelected: boolean = false
+) {
+  const start = resolveConnectorEndpoint(connector.from, images, shapes, canvasTexts, checklists);
+  const end = resolveConnectorEndpoint(connector.to, images, shapes, canvasTexts, checklists);
+  const { cp1, cp2 } = computeCurvyConnectorControlPoints(start, end);
+
+  ctx.save();
+  ctx.strokeStyle = isSelected ? '#2563EB' : (connector.color || '#374151');
+  ctx.lineWidth = isSelected ? (connector.width || 2.5) + 1.5 : (connector.width || 2.2);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+  ctx.stroke();
+
+  // Draw end arrowhead
+  if (connector.arrowHead !== 'none') {
+    const endTangentX = end.x - cp2.x;
+    const endTangentY = end.y - cp2.y;
+    const angle = Math.atan2(endTangentY, endTangentX);
+    const arrowLen = Math.max(10, (connector.width || 2.5) * 4.5);
+
+    ctx.fillStyle = isSelected ? '#2563EB' : (connector.color || '#374151');
+    ctx.beginPath();
+    ctx.moveTo(end.x, end.y);
+    ctx.lineTo(
+      end.x - arrowLen * Math.cos(angle - Math.PI / 7),
+      end.y - arrowLen * Math.sin(angle - Math.PI / 7)
+    );
+    ctx.lineTo(
+      end.x - arrowLen * 0.75 * Math.cos(angle),
+      end.y - arrowLen * 0.75 * Math.sin(angle)
+    );
+    ctx.lineTo(
+      end.x - arrowLen * Math.cos(angle + Math.PI / 7),
+      end.y - arrowLen * Math.sin(angle + Math.PI / 7)
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Draw start arrowhead if both
+  if (connector.arrowHead === 'both') {
+    const startTangentX = start.x - cp1.x;
+    const startTangentY = start.y - cp1.y;
+    const angle = Math.atan2(startTangentY, startTangentX);
+    const arrowLen = Math.max(10, (connector.width || 2.5) * 4.5);
+
+    ctx.fillStyle = isSelected ? '#2563EB' : (connector.color || '#374151');
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(
+      start.x - arrowLen * Math.cos(angle - Math.PI / 7),
+      start.y - arrowLen * Math.sin(angle - Math.PI / 7)
+    );
+    ctx.lineTo(
+      start.x - arrowLen * 0.75 * Math.cos(angle),
+      start.y - arrowLen * 0.75 * Math.sin(angle)
+    );
+    ctx.lineTo(
+      start.x - arrowLen * Math.cos(angle + Math.PI / 7),
+      start.y - arrowLen * Math.sin(angle + Math.PI / 7)
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Draw optional label at midpoint (t = 0.5)
+  if (connector.label) {
+    const t = 0.5;
+    const midX =
+      Math.pow(1 - t, 3) * start.x +
+      3 * Math.pow(1 - t, 2) * t * cp1.x +
+      3 * (1 - t) * Math.pow(t, 2) * cp2.x +
+      Math.pow(t, 3) * end.x;
+    const midY =
+      Math.pow(1 - t, 3) * start.y +
+      3 * Math.pow(1 - t, 2) * t * cp1.y +
+      3 * (1 - t) * Math.pow(t, 2) * cp2.y +
+      Math.pow(t, 3) * end.y;
+
+    ctx.font = '12px system-ui, -apple-system, sans-serif';
+    const textWidth = ctx.measureText(connector.label).width;
+    const padX = 8;
+    const padY = 4;
+    const boxW = textWidth + padX * 2;
+    const boxH = 20;
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = '#D1D5DB';
+    ctx.lineWidth = 1;
+    if (typeof (ctx as any).roundRect === 'function') {
+      (ctx as any).roundRect(midX - boxW / 2, midY - boxH / 2, boxW, boxH, 10);
+    } else {
+      ctx.rect(midX - boxW / 2, midY - boxH / 2, boxW, boxH);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#374151';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(connector.label, midX, midY);
+  }
+
+  ctx.restore();
 }
 

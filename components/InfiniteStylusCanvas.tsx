@@ -14,6 +14,9 @@ import {
   CanvasShapeItem,
   CanvasChecklistItem,
   ShapeType,
+  CanvasConnectorItem,
+  CanvasConnectorEndpoint,
+  ConnectorAnchorSide,
 } from '@/types/canvas';
 import {
   calculateStrokeBounds,
@@ -30,6 +33,11 @@ import {
   saveActiveProjectId,
   calculateCanvasTextBounds,
   findCollisionFreeAssistantSpawn,
+  drawCurvyConnector,
+  getItemBoundingBox,
+  getAnchorPointForSide,
+  resolveConnectorEndpoint,
+  computeCurvyConnectorControlPoints,
 } from '@/lib/canvas-utils';
 import { generateOfflineAssistantThought } from '@/lib/offline-intelligence';
 import { LiquidBottomDock } from '@/components/LiquidBottomDock';
@@ -41,7 +49,9 @@ import { CanvasItemTransformOverlay, SelectedCanvasItem } from '@/components/Can
 import { CanvasChecklistCard } from '@/components/CanvasChecklistCard';
 import { CanvasMiniRadar } from '@/components/CanvasMiniRadar';
 import { CanvasTimeMachine } from '@/components/CanvasTimeMachine';
-import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2 } from 'lucide-react';
+import { CanvasOnboardingGuide } from '@/components/CanvasOnboardingGuide';
+import { CanvasConnectorActionOverlay } from '@/components/CanvasConnectorActionOverlay';
+import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2, HelpCircle, Workflow, Type, Copy, Compass } from 'lucide-react';
 
 // Living Ink: Detect natural scratch-out / scribble gesture
 const isScratchOutGesture = (points: Point[]): boolean => {
@@ -162,8 +172,31 @@ export const InfiniteStylusCanvas: React.FC = () => {
     return proj?.checklists || [];
   });
 
+  const [connectors, setConnectors] = useState<CanvasConnectorItem[]>(() => {
+    const list = loadSavedProjects();
+    const savedId = loadActiveProjectId();
+    const proj = list.find((p) => p.id === savedId) || list[0];
+    return proj?.connectors || [];
+  });
+
   const [selectedItem, setSelectedItem] = useState<SelectedCanvasItem | null>(null);
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null);
+  const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState<boolean>(false);
+
+  // Active in-progress connector drag state (from anchor dot to target item or free point)
+  const [activeConnectorDrag, setActiveConnectorDrag] = useState<{
+    fromItemId?: string;
+    fromSide?: ConnectorAnchorSide;
+    startPoint: { x: number; y: number };
+    currentPoint: { x: number; y: number };
+    targetCandidate?: { itemId: string; side: ConnectorAnchorSide; point: { x: number; y: number } } | null;
+  } | null>(null);
+  const activeConnectorDragRef = useRef<typeof activeConnectorDrag>(null);
+
+  useEffect(() => {
+    activeConnectorDragRef.current = activeConnectorDrag;
+  }, [activeConnectorDrag]);
 
   const [viewport, setViewport] = useState<Viewport>(() => {
     const list = loadSavedProjects();
@@ -180,6 +213,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const imagesRef = useRef<CanvasImageItem[]>(images);
   const shapesRef = useRef<CanvasShapeItem[]>(shapes);
   const checklistsRef = useRef<CanvasChecklistItem[]>(checklists);
+  const connectorsRef = useRef<CanvasConnectorItem[]>(connectors);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const activeProjectIdRef = useRef<string>(activeProjectId);
   const activeProjectRef = useRef<ProjectNote | null>(activeProject);
@@ -213,6 +247,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   }, [checklists]);
 
   useEffect(() => {
+    connectorsRef.current = connectors;
+  }, [connectors]);
+
+  useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
     activeProjectRef.current = activeProject;
   }, [activeProjectId, activeProject]);
@@ -229,6 +267,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     images: CanvasImageItem[];
     shapes: CanvasShapeItem[];
     checklists: CanvasChecklistItem[];
+    connectors: CanvasConnectorItem[];
   }[]>(() => {
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
@@ -241,6 +280,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         images: proj?.images || [],
         shapes: proj?.shapes || [],
         checklists: proj?.checklists || [],
+        connectors: proj?.connectors || [],
       },
     ];
   });
@@ -267,6 +307,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const lastPanPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const pointerDownPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const hasDraggedRef = useRef<boolean>(false);
+  const [isSpaceHeld, setIsSpaceHeld] = useState<boolean>(false);
+  const isSpaceHeldRef = useRef<boolean>(false);
+  const prevToolRef = useRef<StylusToolType>('pan');
+  const [isPanningState, setIsPanningState] = useState<boolean>(false);
 
   // Direct canvas item dragging for shapes and images
   const directDragItemRef = useRef<{
@@ -350,6 +394,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: imagesRef.current,
           shapes: shapesRef.current,
           checklists: checklistsRef.current,
+          connectors: connectorsRef.current,
           viewport,
         });
       }
@@ -370,6 +415,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: imagesRef.current,
           shapes: shapesRef.current,
           checklists: checklistsRef.current,
+          connectors: connectorsRef.current,
           viewport: viewportRef.current,
         });
       }
@@ -463,6 +509,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: imagesRef.current,
           shapes: shapesRef.current,
           checklists: checklistsRef.current,
+          connectors: connectorsRef.current,
           viewport: viewportRef.current,
         });
       }
@@ -478,6 +525,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         const loadedImages = target.images || [];
         const loadedShapes = target.shapes || [];
         const loadedChecklists = target.checklists || [];
+        const loadedConnectors = target.connectors || [];
         const loadedViewport = target.viewport || { x: 200, y: 150, zoom: 1 };
 
         setActiveProjectId(target.id);
@@ -491,6 +539,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         imagesRef.current = loadedImages;
         shapesRef.current = loadedShapes;
         checklistsRef.current = loadedChecklists;
+        connectorsRef.current = loadedConnectors;
         viewportRef.current = loadedViewport;
 
         setStrokes(loadedStrokes);
@@ -499,6 +548,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         setImages(loadedImages);
         setShapes(loadedShapes);
         setChecklists(loadedChecklists);
+        setConnectors(loadedConnectors);
         setViewport(loadedViewport);
 
         setHistory([
@@ -509,6 +559,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
             images: loadedImages,
             shapes: loadedShapes,
             checklists: loadedChecklists,
+            connectors: loadedConnectors,
           },
         ]);
         setHistoryIndex(0);
@@ -516,6 +567,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         setActiveThoughtId(null);
         setActiveTextId(null);
         setSelectedItem(null);
+        setSelectedConnectorId(null);
         setCurrentTool('pan');
         showToast(`Opened: ${target.title}`);
       }
@@ -538,6 +590,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         images: imagesRef.current,
         shapes: shapesRef.current,
         checklists: checklistsRef.current,
+        connectors: connectorsRef.current,
         viewport: viewportRef.current,
       });
     }
@@ -556,6 +609,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       images: [],
       shapes: [],
       checklists: [],
+      connectors: [],
       viewport: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150, zoom: 1 },
     };
 
@@ -574,6 +628,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     imagesRef.current = [];
     shapesRef.current = [];
     checklistsRef.current = [];
+    connectorsRef.current = [];
     viewportRef.current = newNote.viewport;
 
     setStrokes([]);
@@ -582,13 +637,15 @@ export const InfiniteStylusCanvas: React.FC = () => {
     setImages([]);
     setShapes([]);
     setChecklists([]);
+    setConnectors([]);
     setViewport(newNote.viewport);
-    setHistory([{ strokes: [], thoughts: [], canvasTexts: [], images: [], shapes: [], checklists: [] }]);
+    setHistory([{ strokes: [], thoughts: [], canvasTexts: [], images: [], shapes: [], checklists: [], connectors: [] }]);
     setHistoryIndex(0);
     setSelectedSentences([]);
     setActiveThoughtId(null);
     setActiveTextId(null);
     setSelectedItem(null);
+    setSelectedConnectorId(null);
     setCurrentTool('pan');
     showToast('New board ready');
   }, [showToast]);
@@ -647,7 +704,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
       newTexts: CanvasTextItem[] = canvasTextsRef.current,
       newImages: CanvasImageItem[] = imagesRef.current,
       newShapes: CanvasShapeItem[] = shapesRef.current,
-      newChecklists: CanvasChecklistItem[] = checklistsRef.current
+      newChecklists: CanvasChecklistItem[] = checklistsRef.current,
+      newConnectors: CanvasConnectorItem[] = connectorsRef.current
     ) => {
       const nextHistory = history.slice(0, historyIndex + 1);
       nextHistory.push({
@@ -657,6 +715,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         images: newImages,
         shapes: newShapes,
         checklists: newChecklists,
+        connectors: newConnectors,
       });
       setHistory(nextHistory);
       setHistoryIndex(nextHistory.length - 1);
@@ -671,6 +730,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: newImages,
           shapes: newShapes,
           checklists: newChecklists,
+          connectors: newConnectors,
           viewport: viewportRef.current,
         });
       }
@@ -687,6 +747,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       setImages(prev.images || []);
       setShapes(prev.shapes || []);
       setChecklists(prev.checklists || []);
+      setConnectors(prev.connectors || []);
 
       strokesRef.current = prev.strokes;
       thoughtsRef.current = prev.thoughts;
@@ -694,10 +755,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
       imagesRef.current = prev.images || [];
       shapesRef.current = prev.shapes || [];
       checklistsRef.current = prev.checklists || [];
+      connectorsRef.current = prev.connectors || [];
 
       setHistoryIndex(historyIndex - 1);
       setSelectedSentences([]);
       setSelectedItem(null);
+      setSelectedConnectorId(null);
 
       if (activeProjectRef.current) {
         autoSaveSingleProject({
@@ -708,6 +771,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: prev.images || [],
           shapes: prev.shapes || [],
           checklists: prev.checklists || [],
+          connectors: prev.connectors || [],
           viewport: viewportRef.current,
         });
       }
@@ -723,6 +787,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       setImages(next.images || []);
       setShapes(next.shapes || []);
       setChecklists(next.checklists || []);
+      setConnectors(next.connectors || []);
 
       strokesRef.current = next.strokes;
       thoughtsRef.current = next.thoughts;
@@ -730,10 +795,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
       imagesRef.current = next.images || [];
       shapesRef.current = next.shapes || [];
       checklistsRef.current = next.checklists || [];
+      connectorsRef.current = next.connectors || [];
 
       setHistoryIndex(historyIndex + 1);
       setSelectedSentences([]);
       setSelectedItem(null);
+      setSelectedConnectorId(null);
 
       if (activeProjectRef.current) {
         autoSaveSingleProject({
@@ -744,6 +811,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images: next.images || [],
           shapes: next.shapes || [],
           checklists: next.checklists || [],
+          connectors: next.connectors || [],
           viewport: viewportRef.current,
         });
       }
@@ -768,6 +836,258 @@ export const InfiniteStylusCanvas: React.FC = () => {
     },
     [viewport]
   );
+
+  // Convert Canvas coordinate to Screen Coordinate
+  const canvasToScreen = useCallback(
+    (canvasX: number, canvasY: number): Point => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return {
+          x: canvasX * viewport.zoom + viewport.x,
+          y: canvasY * viewport.zoom + viewport.y,
+        };
+      }
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + viewport.x + canvasX * viewport.zoom,
+        y: rect.top + viewport.y + canvasY * viewport.zoom,
+      };
+    },
+    [viewport]
+  );
+
+  // Start dragging a connector from an item's anchor side
+  const handleStartConnectorDrag = useCallback(
+    (itemId: string, side: ConnectorAnchorSide, startX: number, startY: number) => {
+      setActiveConnectorDrag({
+        fromItemId: itemId,
+        fromSide: side,
+        startPoint: { x: startX, y: startY },
+        currentPoint: { x: startX, y: startY },
+        targetCandidate: null,
+      });
+      setSelectedConnectorId(null);
+    },
+    []
+  );
+
+  // Update connector properties (color, arrowHead, label, etc.)
+  const handleUpdateConnector = useCallback(
+    (id: string, updates: Partial<CanvasConnectorItem>) => {
+      setConnectors((prev) => {
+        const updated = prev.map((c) => (c.id === id ? { ...c, ...updates } : c));
+        connectorsRef.current = updated;
+        pushHistory(
+          strokesRef.current,
+          thoughtsRef.current,
+          canvasTextsRef.current,
+          imagesRef.current,
+          shapesRef.current,
+          checklistsRef.current,
+          updated
+        );
+        return updated;
+      });
+    },
+    [pushHistory]
+  );
+
+  // Delete a connector
+  const handleDeleteConnector = useCallback(
+    (id: string) => {
+      setConnectors((prev) => {
+        const updated = prev.filter((c) => c.id !== id);
+        connectorsRef.current = updated;
+        pushHistory(
+          strokesRef.current,
+          thoughtsRef.current,
+          canvasTextsRef.current,
+          imagesRef.current,
+          shapesRef.current,
+          checklistsRef.current,
+          updated
+        );
+        return updated;
+      });
+      setSelectedConnectorId(null);
+      showToast('Connector removed');
+    },
+    [pushHistory, showToast]
+  );
+
+  // Active connector drag move and drop listeners (zero lag, snapping to nearest candidate side)
+  useEffect(() => {
+    if (!activeConnectorDrag) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      const canvasPos = screenToCanvas(e.clientX, e.clientY);
+      let bestCandidate: { itemId: string; side: ConnectorAnchorSide; point: { x: number; y: number } } | null = null;
+      let minDistance = 55;
+
+      const checkItemSides = (itemId: string, bbox: { x: number; y: number; width: number; height: number }) => {
+        if (itemId === activeConnectorDragRef.current?.fromItemId) return;
+        const sides: ConnectorAnchorSide[] = ['top', 'right', 'bottom', 'left'];
+        for (const side of sides) {
+          const p = getAnchorPointForSide(bbox, side);
+          const d = Math.hypot(canvasPos.x - p.x, canvasPos.y - p.y);
+          if (d < minDistance) {
+            minDistance = d;
+            bestCandidate = { itemId, side, point: p };
+          }
+        }
+      };
+
+      for (const img of imagesRef.current) {
+        checkItemSides(img.id, { x: img.x, y: img.y, width: img.width, height: img.height });
+      }
+      for (const shp of shapesRef.current) {
+        checkItemSides(shp.id, { x: shp.x, y: shp.y, width: shp.width, height: shp.height });
+      }
+      for (const txt of canvasTextsRef.current) {
+        const lines = txt.text ? txt.text.split('\n') : [''];
+        const w = Math.max(80, Math.max(...lines.map((l) => l.length * 12)));
+        const h = Math.max(36, lines.length * 32);
+        checkItemSides(txt.id, { x: txt.x, y: txt.y, width: w, height: h });
+      }
+      for (const chk of checklistsRef.current) {
+        const w = chk.width || 300;
+        const count = chk.hideCompleted ? chk.items.filter((i) => !i.completed).length : chk.items.length;
+        const h = 60 + count * 40 + 60;
+        checkItemSides(chk.id, { x: chk.x, y: chk.y, width: w, height: h });
+      }
+
+      setActiveConnectorDrag((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          currentPoint: bestCandidate ? bestCandidate.point : canvasPos,
+          targetCandidate: bestCandidate,
+        };
+      });
+    };
+
+    const onPointerUp = () => {
+      const drag = activeConnectorDragRef.current;
+      if (drag) {
+        const dist = Math.hypot(drag.currentPoint.x - drag.startPoint.x, drag.currentPoint.y - drag.startPoint.y);
+        if (dist > 18) {
+          const newConnector: CanvasConnectorItem = {
+            id: `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            from: {
+              itemId: drag.fromItemId,
+              side: drag.fromSide,
+              x: drag.startPoint.x,
+              y: drag.startPoint.y,
+            },
+            to: drag.targetCandidate
+              ? {
+                  itemId: drag.targetCandidate.itemId,
+                  side: drag.targetCandidate.side,
+                  x: drag.targetCandidate.point.x,
+                  y: drag.targetCandidate.point.y,
+                }
+              : {
+                  x: drag.currentPoint.x,
+                  y: drag.currentPoint.y,
+                },
+            color: currentColor === '#FAF9F6' ? '#374151' : currentColor || '#374151',
+            width: 2.5,
+            arrowHead: 'end',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+
+          const next = [...connectorsRef.current, newConnector];
+          setConnectors(next);
+          connectorsRef.current = next;
+          pushHistory(
+            strokesRef.current,
+            thoughtsRef.current,
+            canvasTextsRef.current,
+            imagesRef.current,
+            shapesRef.current,
+            checklistsRef.current,
+            next
+          );
+          setSelectedConnectorId(newConnector.id);
+          showToast('Flowchart link connected');
+        }
+      }
+      setActiveConnectorDrag(null);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [activeConnectorDrag, screenToCanvas, currentColor, pushHistory, showToast]);
+
+  // Selected Connector computation
+  const selectedConnector = useMemo(() => {
+    if (!selectedConnectorId) return null;
+    return connectors.find((c) => c.id === selectedConnectorId) || null;
+  }, [selectedConnectorId, connectors]);
+
+  const selectedConnectorMidpoint = useMemo(() => {
+    if (!selectedConnector) return null;
+    const start = resolveConnectorEndpoint(
+      selectedConnector.from,
+      images,
+      shapes,
+      canvasTexts,
+      checklists
+    );
+    const end = resolveConnectorEndpoint(
+      selectedConnector.to,
+      images,
+      shapes,
+      canvasTexts,
+      checklists
+    );
+    const { cp1, cp2 } = computeCurvyConnectorControlPoints(start, end);
+    const t = 0.5;
+    const mx =
+      Math.pow(1 - t, 3) * start.x +
+      3 * Math.pow(1 - t, 2) * t * cp1.x +
+      3 * (1 - t) * Math.pow(t, 2) * cp2.x +
+      Math.pow(t, 3) * end.x;
+    const my =
+      Math.pow(1 - t, 3) * start.y +
+      3 * Math.pow(1 - t, 2) * t * cp1.y +
+      3 * (1 - t) * Math.pow(t, 2) * cp2.y +
+      Math.pow(t, 3) * end.y;
+    return { x: mx, y: my };
+  }, [selectedConnector, images, shapes, canvasTexts, checklists]);
+
+  // Hit test against connectors on canvas
+  const hitTestConnector = useCallback((canvasPt: Point): CanvasConnectorItem | null => {
+    for (let i = connectorsRef.current.length - 1; i >= 0; i--) {
+      const conn = connectorsRef.current[i];
+      const start = resolveConnectorEndpoint(conn.from, imagesRef.current, shapesRef.current, canvasTextsRef.current, checklistsRef.current);
+      const end = resolveConnectorEndpoint(conn.to, imagesRef.current, shapesRef.current, canvasTextsRef.current, checklistsRef.current);
+      const { cp1, cp2 } = computeCurvyConnectorControlPoints(start, end);
+
+      for (let step = 0; step <= 20; step++) {
+        const t = step / 20;
+        const x =
+          Math.pow(1 - t, 3) * start.x +
+          3 * Math.pow(1 - t, 2) * t * cp1.x +
+          3 * (1 - t) * Math.pow(t, 2) * cp2.x +
+          Math.pow(t, 3) * end.x;
+        const y =
+          Math.pow(1 - t, 3) * start.y +
+          3 * Math.pow(1 - t, 2) * t * cp1.y +
+          3 * (1 - t) * Math.pow(t, 2) * cp2.y +
+          Math.pow(t, 3) * end.y;
+        if (Math.hypot(canvasPt.x - x, canvasPt.y - y) <= 14) {
+          return conn;
+        }
+      }
+    }
+    return null;
+  }, []);
 
   // Import images from file picker, drag & drop, or clipboard
   const handleImportImageFiles = useCallback(
@@ -1123,11 +1443,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Delete item from canvas
   const handleDeleteItem = useCallback(
     (id: string, type: 'image' | 'shape' | 'text') => {
+      // Also clean up any connectors linked to this item
+      const cleanedConnectors = connectorsRef.current.filter(
+        (c) => c.from.itemId !== id && c.to.itemId !== id
+      );
+      if (cleanedConnectors.length !== connectorsRef.current.length) {
+        setConnectors(cleanedConnectors);
+        connectorsRef.current = cleanedConnectors;
+      }
+
       if (type === 'image') {
         setImages((prev) => {
           const next = prev.filter((i) => i.id !== id);
           imagesRef.current = next;
-          pushHistory(strokesRef.current, thoughtsRef.current, canvasTextsRef.current, next, shapesRef.current);
+          pushHistory(strokesRef.current, thoughtsRef.current, canvasTextsRef.current, next, shapesRef.current, checklistsRef.current, cleanedConnectors);
           return next;
         });
         setSelectedItem(null);
@@ -1136,7 +1465,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         setShapes((prev) => {
           const next = prev.filter((s) => s.id !== id);
           shapesRef.current = next;
-          pushHistory(strokesRef.current, thoughtsRef.current, canvasTextsRef.current, imagesRef.current, next);
+          pushHistory(strokesRef.current, thoughtsRef.current, canvasTextsRef.current, imagesRef.current, next, checklistsRef.current, cleanedConnectors);
           return next;
         });
         setSelectedItem(null);
@@ -1145,7 +1474,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         setCanvasTexts((prev) => {
           const next = prev.filter((t) => t.id !== id);
           canvasTextsRef.current = next;
-          pushHistory(strokesRef.current, thoughtsRef.current, next, imagesRef.current, shapesRef.current);
+          pushHistory(strokesRef.current, thoughtsRef.current, next, imagesRef.current, shapesRef.current, checklistsRef.current, cleanedConnectors);
           return next;
         });
         setSelectedItem(null);
@@ -1725,7 +2054,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
   // Double-tap or Click Detection to select sentence
   const handleSentenceSelectAtCanvasPoint = useCallback(
-    (canvasPos: Point) => {
+    (canvasPos: Point): boolean => {
       let hitSentence: ThoughtSentence | null = null;
 
       for (const thought of thoughts) {
@@ -1753,8 +2082,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
             return [...prev, hitSentence!];
           }
         });
+        return true;
       } else {
         setSelectedSentences([]);
+        return false;
       }
     },
     [thoughts]
@@ -1992,8 +2323,71 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
     }
 
+    // 4. Draw Curvy Flowchart Connectors
+    for (const conn of connectors) {
+      drawCurvyConnector(
+        ctx,
+        conn,
+        images,
+        shapes,
+        canvasTexts,
+        checklists,
+        selectedConnectorId === conn.id
+      );
+    }
+
+    // 4.5 Draw Active Connector Drag Line & Snap Halo
+    if (activeConnectorDrag) {
+      const start = activeConnectorDrag.startPoint;
+      const end = activeConnectorDrag.currentPoint;
+      const { cp1, cp2 } = computeCurvyConnectorControlPoints(start, end);
+
+      ctx.save();
+      ctx.strokeStyle = '#2563EB';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(start.x, start.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+      ctx.stroke();
+
+      // Active tip indicator dot
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#2563EB';
+      ctx.beginPath();
+      ctx.arc(end.x, end.y, activeConnectorDrag.targetCandidate ? 7 : 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (activeConnectorDrag.targetCandidate) {
+        ctx.strokeStyle = '#60A5FA';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(end.x, end.y, 11, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     ctx.restore();
-  }, [viewport, strokes, thoughts, canvasTexts, images, shapes, activeTextId, currentTool, currentColor, strokeWidth, isTimeMachineOpen, timeMachineStep]);
+  }, [
+    viewport,
+    strokes,
+    thoughts,
+    canvasTexts,
+    images,
+    shapes,
+    checklists,
+    connectors,
+    selectedConnectorId,
+    activeConnectorDrag,
+    activeTextId,
+    currentTool,
+    currentColor,
+    strokeWidth,
+    isTimeMachineOpen,
+    timeMachineStep,
+  ]);
 
   // Animation Frame Loop
   useEffect(() => {
@@ -2084,6 +2478,17 @@ export const InfiniteStylusCanvas: React.FC = () => {
     const isMiddleOrRight = e.button === 1 || e.button === 2;
     const screenX = e.clientX;
     const screenY = e.clientY;
+
+    // External mouse middle-click (button 1), right-click (button 2), spacebar held, or Pan tool: pan canvas
+    if (isMiddleOrRight || currentTool === 'pan' || isSpaceHeldRef.current) {
+      isPanningRef.current = true;
+      setIsPanningState(true);
+      lastPanPointRef.current = { x: screenX, y: screenY };
+      pointerDownPosRef.current = { x: screenX, y: screenY };
+      hasDraggedRef.current = false;
+      return;
+    }
+
     const canvasPos = screenToCanvas(screenX, screenY);
 
     const now = Date.now();
@@ -2096,8 +2501,34 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
 
-    // Direct Canvas Interaction for Shapes and Images when not drawing with a pen tool
+    // Direct Canvas Interaction for Shapes, Images, Connectors, and Text when not drawing with a pen tool
     if (!isPenTool && !isMiddleOrRight) {
+      // 0. Hit test against Connectors
+      const hitConn = hitTestConnector(canvasPos);
+      if (hitConn) {
+        setSelectedConnectorId(hitConn.id);
+        setSelectedItem(null);
+        return;
+      } else {
+        setSelectedConnectorId(null);
+      }
+
+      // 0.5 Direct typing if Text tool active
+      if (currentTool === 'text') {
+        handleCanvasTapToType(screenX, screenY);
+        return;
+      }
+
+      // 0.6 Connector Tool active: initiate drag from under pointer
+      if (currentTool === 'connector') {
+        const hitShp = [...shapesRef.current].reverse().find((s) => canvasPos.x >= s.x && canvasPos.x <= s.x + s.width && canvasPos.y >= s.y && canvasPos.y <= s.y + s.height);
+        const hitImg = [...imagesRef.current].reverse().find((i) => canvasPos.x >= i.x && canvasPos.x <= i.x + i.width && canvasPos.y >= i.y && canvasPos.y <= i.y + i.height);
+        const hitTxt = [...canvasTextsRef.current].reverse().find((t) => canvasPos.x >= t.x && canvasPos.x <= t.x + 200 && canvasPos.y >= t.y && canvasPos.y <= t.y + 60);
+        const fromId = hitShp ? hitShp.id : hitImg ? hitImg.id : hitTxt ? hitTxt.id : `pt-${Date.now()}`;
+        handleStartConnectorDrag(fromId, 'right', canvasPos.x, canvasPos.y);
+        return;
+      }
+
       // 1. Hit test against Shapes and Sticky Notes (top-most shape first)
       const hitShape = [...shapesRef.current].reverse().find((shp) => {
         const minX = Math.min(shp.x, shp.x + shp.width);
@@ -2174,7 +2605,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
 
     if (isDoubleTap) {
-      handleSentenceSelectAtCanvasPoint(canvasPos);
+      const sentenceHit = handleSentenceSelectAtCanvasPoint(canvasPos);
+      if (!sentenceHit) {
+        handleCanvasTapToType(screenX, screenY);
+      }
       return;
     }
 
@@ -2391,10 +2825,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
       return;
     }
 
+    setIsPanningState(false);
     if (isPanningRef.current) {
       isPanningRef.current = false;
+      const isMiddleOrRight = e.button === 1 || e.button === 2;
       const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
-      if (!hasDraggedRef.current && !isPenTool) {
+      if (!hasDraggedRef.current && !isPenTool && !isMiddleOrRight && !isSpaceHeldRef.current && currentTool !== 'pan') {
         handleCanvasTapToType(e.clientX, e.clientY);
       }
       return;
@@ -2478,16 +2914,18 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
   };
 
-  // Wheel Zoom / Pan
+  // Wheel Zoom / Pan (Continuous smooth exponential zoom centered at mouse cursor)
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      const zoomFactor = e.deltaY > 0 ? 0.92 : 1.08;
+    const isZoom = e.ctrlKey || e.metaKey || e.altKey;
+    if (isZoom) {
+      const zoomIntensity = 0.0025;
+      const zoomFactor = Math.exp(-e.deltaY * zoomIntensity);
       const mouseX = e.clientX;
       const mouseY = e.clientY;
 
       setViewport((prev) => {
-        const newZoom = Math.min(4.0, Math.max(0.2, prev.zoom * zoomFactor));
+        const newZoom = Math.min(5.0, Math.max(0.15, prev.zoom * zoomFactor));
         const updated = {
           zoom: newZoom,
           x: mouseX - (mouseX - prev.x) * (newZoom / prev.zoom),
@@ -2509,20 +2947,82 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
   };
 
-  // Keyboard Shortcuts (Undo, Redo, Save, Pan)
+  // Keyboard Shortcuts (Undo, Redo, Save, Pan, Tool switching, Duplicate, Delete, Copy)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+      const key = e.key.toLowerCase();
+
+      if ((e.metaKey || e.ctrlKey) && key === 'z') {
+        e.preventDefault();
         if (e.shiftKey) handleRedo();
         else handleUndo();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      } else if ((e.metaKey || e.ctrlKey) && key === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.metaKey || e.ctrlKey) && key === 's') {
         e.preventDefault();
         handleSaveProject();
-      } else if (e.key === ' ') {
-        setCurrentTool('pan');
+      } else if ((e.metaKey || e.ctrlKey) && key === 'c') {
+        if (selectedItem?.type === 'text') {
+          e.preventDefault();
+          const txt = (selectedItem.item as CanvasTextItem).text;
+          if (txt) {
+            navigator.clipboard.writeText(txt).then(() => showToast('Text note copied'));
+          }
+        } else if (selectedSentences.length > 0) {
+          e.preventDefault();
+          handleCopySelectedText();
+        }
+      } else if ((e.metaKey || e.ctrlKey) && key === 'd' && selectedItem) {
+        e.preventDefault();
+        handleDuplicateItem(selectedItem);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedItem) {
+          e.preventDefault();
+          handleDeleteItem(selectedItem.item.id, selectedItem.type);
+        } else if (selectedConnectorId) {
+          e.preventDefault();
+          handleDeleteConnector(selectedConnectorId);
+        }
+      } else if (e.key === 'Escape') {
+        if (selectedItem) setSelectedItem(null);
+        if (selectedConnectorId) setSelectedConnectorId(null);
+        if (isTimeMachineOpen) setIsTimeMachineOpen(false);
+        if (isGuideOpen) setIsGuideOpen(false);
+      } else if (e.key === ' ' || e.code === 'Space') {
+        if (!isSpaceHeldRef.current) {
+          isSpaceHeldRef.current = true;
+          setIsSpaceHeld(true);
+          prevToolRef.current = currentTool;
+          setCurrentTool('pan');
+        }
+      } else if (key === 'v' || key === '1') {
+        setCurrentTool('select');
+      } else if (key === 'p' || key === '2') {
+        setCurrentTool('pen');
+      } else if (key === 'b' || key === '3') {
+        setCurrentTool('pencil');
+      } else if (key === 'h' || key === '4') {
+        setCurrentTool('highlighter');
+      } else if (key === 'e' || key === '5') {
+        setCurrentTool('eraser');
+      } else if (key === 't') {
+        setCurrentTool('text');
+        showToast('Text tool active • Click canvas to type');
+      } else if (key === 'c' && !e.metaKey && !e.ctrlKey) {
+        setCurrentTool('connector');
+        showToast('Flowchart connector active');
+      } else if (key === '?' || key === '/') {
+        setIsGuideOpen(true);
+      } else if (key === 'm') {
+        setIsTimeMachineOpen((prev) => !prev);
+      } else if (e.key === '[') {
+        setStrokeWidth((prev) => Math.max(1, prev - 1));
+      } else if (e.key === ']') {
+        setStrokeWidth((prev) => Math.min(24, prev + 1));
       }
     };
 
@@ -2530,8 +3030,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (e.key === ' ' && currentTool === 'pan') {
-        setCurrentTool('pen');
+      if (e.key === ' ' || e.code === 'Space') {
+        isSpaceHeldRef.current = false;
+        setIsSpaceHeld(false);
+        setCurrentTool(prevToolRef.current || 'pen');
       }
     };
 
@@ -2541,10 +3043,34 @@ export const InfiniteStylusCanvas: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleUndo, handleRedo, handleSaveProject, currentTool]);
+  }, [
+    handleUndo,
+    handleRedo,
+    handleSaveProject,
+    currentTool,
+    selectedItem,
+    isTimeMachineOpen,
+    handleDuplicateItem,
+    handleDeleteItem,
+    handleCopySelectedText,
+    handleDeleteConnector,
+    isGuideOpen,
+    selectedConnectorId,
+    selectedSentences.length,
+    showToast,
+  ]);
 
   const activeTextItem = activeTextId ? canvasTexts.find((t) => t.id === activeTextId) : null;
   const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
+
+  const canvasCursor =
+    isSpaceHeld || currentTool === 'pan'
+      ? isPanningState ? 'cursor-grabbing' : 'cursor-grab'
+      : currentTool === 'select'
+      ? 'cursor-default'
+      : currentTool === 'eraser'
+      ? 'cursor-cell'
+      : 'cursor-crosshair';
 
   return (
     <div
@@ -2670,6 +3196,35 @@ export const InfiniteStylusCanvas: React.FC = () => {
         >
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
+
+        <div className="w-px h-3.5 bg-neutral-200" />
+
+        {/* Mini Radar Toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            setIsMiniRadarVisible((prev) => !prev);
+            showToast(isMiniRadarVisible ? 'Mini radar hidden' : 'Mini radar visible');
+          }}
+          className={`p-1.5 rounded-full transition-colors ${
+            isMiniRadarVisible
+              ? 'text-blue-600 bg-blue-50 hover:bg-blue-100'
+              : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
+          }`}
+          title={isMiniRadarVisible ? 'Hide Mini-Radar Navigator' : 'Show Mini-Radar Navigator'}
+        >
+          <Compass className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Quick Keyboard & Feature Guide */}
+        <button
+          type="button"
+          onClick={() => setIsGuideOpen(true)}
+          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors"
+          title="Keyboard shortcuts & Quick Guide (?)"
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Infinite Canvas */}
@@ -2684,7 +3239,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onPointerLeave={handlePointerUp}
         onContextMenu={(e) => e.preventDefault()}
         onWheel={handleWheel}
-        className="absolute inset-0 w-full h-full cursor-crosshair touch-none select-none"
+        className={`absolute inset-0 w-full h-full ${canvasCursor} touch-none select-none`}
         style={{ touchAction: 'none' }}
       />
 
@@ -2751,8 +3306,21 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onDuplicateItem={handleDuplicateItem}
         onAnalyzeImage={handleAnalyzeImage}
         isAnalyzingImage={isAnalyzingImage}
+        onStartConnectorDrag={handleStartConnectorDrag}
         onDeselect={() => setSelectedItem(null)}
       />
+
+      {/* Interactive Flowchart Connector Action Overlay (Direction, Arrowheads, Color, Label, Delete) */}
+      {selectedConnector && selectedConnectorMidpoint && (
+        <CanvasConnectorActionOverlay
+          connector={selectedConnector}
+          midpoint={selectedConnectorMidpoint}
+          viewport={viewport}
+          onUpdateConnector={handleUpdateConnector}
+          onDeleteConnector={handleDeleteConnector}
+          onDeselect={() => setSelectedConnectorId(null)}
+        />
+      )}
 
       {/* Interactive Checklists on Canvas */}
       {checklists.map((ch) => (
@@ -2776,10 +3344,18 @@ export const InfiniteStylusCanvas: React.FC = () => {
           images={images}
           shapes={shapes}
           checklists={checklists}
+          connectors={connectors}
           onNavigateViewport={setViewport}
           onFitToContent={handleFitToContent}
         />
       )}
+
+      {/* First-time Onboarding & Keyboard Shortcut Guide */}
+      <CanvasOnboardingGuide
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+        onOpen={() => setIsGuideOpen(true)}
+      />
 
       {/* Time Machine Playback Controller */}
       <CanvasTimeMachine

@@ -1,12 +1,15 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Viewport,
   CanvasImageItem,
   CanvasShapeItem,
   CanvasTextItem,
+  ConnectorAnchorSide,
 } from '@/types/canvas';
+import { calculateCanvasTextBounds } from '@/lib/canvas-utils';
 import {
   Glasses,
   FileText,
@@ -20,6 +23,7 @@ import {
   Check,
   MoreHorizontal,
   X,
+  Workflow,
 } from 'lucide-react';
 
 export type SelectedCanvasItem =
@@ -39,6 +43,8 @@ interface CanvasItemTransformOverlayProps {
   onAnalyzeImage: (image: CanvasImageItem, mode: 'describe' | 'ocr' | 'brainstorm') => void;
   isAnalyzingImage: boolean;
   onDeselect: () => void;
+  onStartConnectorDrag?: (itemId: string, side: ConnectorAnchorSide, startCanvasX: number, startCanvasY: number) => void;
+  onCopyText?: (text: string) => void;
 }
 
 type ResizeHandle = 'nw' | 'ne' | 'se' | 'sw';
@@ -79,12 +85,16 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   onDuplicateItem,
   onAnalyzeImage,
   isAnalyzingImage,
+  onDeselect,
+  onStartConnectorDrag,
+  onCopyText,
 }) => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [resizingHandle, setResizingHandle] = useState<ResizeHandle | null>(null);
   const [showColorPopover, setShowColorPopover] = useState<boolean>(false);
   const [isEditingShapeText, setIsEditingShapeText] = useState<boolean>(false);
   const [showSettingsBar, setShowSettingsBar] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   const [prevSelectedId, setPrevSelectedId] = useState<string | null>(null);
   const currentSelectedId = selected?.item.id || null;
@@ -286,6 +296,36 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
     };
   }, [onUpdateImage, onUpdateShape, onUpdateText, onCommitTransform]);
 
+  // Keyboard shortcut Ctrl+C / Cmd+C for copying text of selected item
+  useEffect(() => {
+    if (!selected) return;
+    const isText = selected.type === 'text';
+    const isShape = selected.type === 'shape';
+    const textItem = isText ? (selected.item as CanvasTextItem) : null;
+    const shapeItem = isShape ? (selected.item as CanvasShapeItem) : null;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        const tag = (document.activeElement?.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+
+        if (isText && textItem?.text) {
+          navigator.clipboard.writeText(textItem.text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
+          onCopyText?.(textItem.text);
+        } else if (isShape && shapeItem?.text) {
+          navigator.clipboard.writeText(shapeItem.text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1800);
+          onCopyText?.(shapeItem.text);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selected, onCopyText]);
+
   if (!selected) return null;
 
   const item = selected.item;
@@ -293,12 +333,17 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   const isShape = selected.type === 'shape';
   const isText = selected.type === 'text';
   const shapeItem = isShape ? (item as CanvasShapeItem) : null;
+  const textItem = isText ? (item as CanvasTextItem) : null;
   const isStickyNote = isShape && shapeItem?.type === 'sticky-note';
+
+  const textBounds = isText
+    ? calculateCanvasTextBounds(textItem?.text || '', item.x, item.y, textItem?.width || 720)
+    : null;
 
   const itemX = item.x;
   const itemY = item.y;
-  const itemWidth = Math.max(20, (item as { width?: number }).width || 240);
-  const itemHeight = Math.max(20, (item as { height?: number }).height || 120);
+  const itemWidth = textBounds ? textBounds.width : Math.max(20, (item as { width?: number }).width || 240);
+  const itemHeight = textBounds ? textBounds.height : Math.max(20, (item as { height?: number }).height || 120);
 
   // Screen coordinates
   const screenLeft = viewport.x + itemX * viewport.zoom;
@@ -393,227 +438,297 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
         )}
       </div>
 
-      {/* Discreet Hold-for-Settings Indicator (Hidden by default; revealed on touch & hold or tap) */}
-      {!showSettingsBar && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowSettingsBar(true);
-          }}
-          className="absolute -top-3.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#18181B] text-neutral-300 hover:text-white px-2.5 py-0.5 rounded-full text-[10px] font-medium shadow-lg border border-neutral-700/80 pointer-events-auto transition-transform hover:scale-105 active:scale-95 select-none"
-          title="Touch & hold anywhere on item to show settings, or tap here"
-        >
-          <MoreHorizontal className="w-3 h-3 text-neutral-400" />
-          <span className="text-[9px] text-neutral-300 tracking-tight font-sans">Hold for settings</span>
-        </button>
-      )}
-
-      {/* Sleek Charcoal Black Floating Action Bar (Shown when touched & held or opened) */}
-      {showSettingsBar && (
-        <div
-          style={{
-            position: 'absolute',
-            top: -46,
-            left: '50%',
-            transform: 'translateX(-50%)',
-          }}
-          className="flex items-center gap-1 bg-[#18181B] text-neutral-200 px-2.5 py-1.5 rounded-xl shadow-2xl border border-neutral-700/80 pointer-events-auto select-none z-50 shrink-0 whitespace-nowrap animate-in fade-in zoom-in-95 duration-150"
-        >
-          {/* Drag handle */}
-          <div
-            onPointerDown={handleDragStart}
-            className="p-1 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing transition-colors"
-            title="Drag to reposition"
+      {/* Discreet, Non-intrusive Settings Trigger */}
+      <AnimatePresence mode="wait">
+        {!showSettingsBar ? (
+          <motion.button
+            key="item-settings-trigger"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowSettingsBar(true);
+            }}
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.8, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 440, damping: 26 }}
+            className="absolute -top-3.5 left-1/2 -translate-x-1/2 flex items-center justify-center w-6 h-5 bg-white/95 text-neutral-600 hover:text-neutral-900 rounded-full shadow-md border border-neutral-200/90 pointer-events-auto backdrop-blur-md cursor-pointer select-none transition-transform hover:scale-110 active:scale-95"
+            title="Open settings"
           >
-            <GripHorizontal className="w-3.5 h-3.5" />
-          </div>
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </motion.button>
+        ) : (
+          <motion.div
+            key="item-settings-toolbar"
+            initial={{ scaleX: 0.08, scaleY: 0.6, opacity: 0 }}
+            animate={{ scaleX: 1, scaleY: 1, opacity: 1 }}
+            exit={{ scaleX: 0.08, scaleY: 0.6, opacity: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: 440,
+              damping: 26,
+              mass: 0.7,
+            }}
+            style={{
+              position: 'absolute',
+              top: -46,
+              left: '50%',
+              x: '-50%',
+              transformOrigin: 'center center',
+            }}
+            className="flex items-center gap-1 bg-white/95 text-neutral-800 px-2 py-1.5 rounded-xl shadow-xl border border-neutral-200/90 backdrop-blur-md pointer-events-auto select-none z-50 shrink-0 whitespace-nowrap"
+          >
+            {/* Drag handle */}
+            <div
+              onPointerDown={handleDragStart}
+              className="p-1 text-neutral-400 hover:text-neutral-800 cursor-grab active:cursor-grabbing transition-colors"
+              title="Drag to reposition"
+            >
+              <GripHorizontal className="w-3.5 h-3.5" />
+            </div>
 
-          {/* AI Vision Actions for Images - Replaced with Glasses Icon */}
-          {isImage && (
-            <>
-              <button
-                onClick={() => onAnalyzeImage(item as CanvasImageItem, 'describe')}
-                disabled={isAnalyzingImage}
-                className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="Analyze image with Vision AI"
-              >
-                <Glasses className={`w-3.5 h-3.5 ${isAnalyzingImage ? 'animate-pulse text-amber-400' : 'text-neutral-300'}`} />
-                <span>{isAnalyzingImage ? 'Analyzing...' : 'Vision AI'}</span>
-              </button>
+            {/* AI Vision Actions for Images */}
+            {isImage && (
+              <>
+                <button
+                  onClick={() => onAnalyzeImage(item as CanvasImageItem, 'describe')}
+                  disabled={isAnalyzingImage}
+                  className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Analyze image with Vision AI"
+                >
+                  <Glasses className={`w-3.5 h-3.5 ${isAnalyzingImage ? 'animate-pulse text-amber-500' : 'text-neutral-500'}`} />
+                  <span>{isAnalyzingImage ? 'Analyzing...' : 'Vision AI'}</span>
+                </button>
 
-              <button
-                onClick={() => onAnalyzeImage(item as CanvasImageItem, 'ocr')}
-                disabled={isAnalyzingImage}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="Extract text and handwriting via OCR"
-              >
-                <ScanText className="w-3.5 h-3.5" />
-                <span>OCR</span>
-              </button>
+                <button
+                  onClick={() => onAnalyzeImage(item as CanvasImageItem, 'ocr')}
+                  disabled={isAnalyzingImage}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Extract text and handwriting via OCR"
+                >
+                  <ScanText className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>OCR</span>
+                </button>
 
-              <button
-                onClick={() => onAnalyzeImage(item as CanvasImageItem, 'brainstorm')}
-                disabled={isAnalyzingImage}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="Brainstorm ideas based on this image"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Ideas</span>
-              </button>
+                <button
+                  onClick={() => onAnalyzeImage(item as CanvasImageItem, 'brainstorm')}
+                  disabled={isAnalyzingImage}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Brainstorm ideas based on this image"
+                >
+                  <FileText className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Ideas</span>
+                </button>
 
-              <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
+                <div className="w-[1px] h-3.5 bg-neutral-200 mx-0.5" />
 
-              {/* Direct Image File Download */}
-              <a
-                href={(item as CanvasImageItem).src}
-                download={(item as CanvasImageItem).name || 'canvas-image.png'}
-                className="p-1 text-neutral-300 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-                title="Download image file"
-              >
-                <Download className="w-3.5 h-3.5" />
-              </a>
-            </>
-          )}
+                {/* Direct Image File Download */}
+                <a
+                  href={(item as CanvasImageItem).src}
+                  download={(item as CanvasImageItem).name || 'canvas-image.png'}
+                  className="p-1 text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 rounded-md transition-colors"
+                  title="Download image file"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </a>
+              </>
+            )}
 
-          {/* Shape Specific Controls: Text & Colors */}
-          {isShape && (
-            <>
-              {/* Shape Text Button */}
+            {/* Text Specific Controls: Copy */}
+            {isText && (
               <button
                 onClick={() => {
-                  setIsEditingShapeText(true);
-                  setTimeout(() => shapeTextareaRef.current?.focus(), 50);
+                  if (textItem?.text) {
+                    navigator.clipboard.writeText(textItem.text);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1800);
+                    onCopyText?.(textItem.text);
+                  }
                 }}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="Add or edit text inside shape"
+                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                title="Copy text note (Ctrl+C)"
               >
-                <Type className="w-3.5 h-3.5" />
-                <span>{shapeItem?.text ? 'Edit Text' : 'Add Text'}</span>
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-neutral-500" />}
+                <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
+            )}
 
-              {/* Shape Color Picker Trigger */}
-              <button
-                onClick={() => setShowColorPopover((prev) => !prev)}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="Change shape colors & stroke"
-              >
-                <Palette className="w-3.5 h-3.5" />
-                <span>Color</span>
-              </button>
-            </>
-          )}
+            {/* Shape Specific Controls: Text, Copy & Colors */}
+            {isShape && (
+              <>
+                {/* Shape Text Button */}
+                <button
+                  onClick={() => {
+                    setIsEditingShapeText(true);
+                    setTimeout(() => shapeTextareaRef.current?.focus(), 50);
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Add or edit text inside shape"
+                >
+                  <Type className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>{shapeItem?.text ? 'Edit Text' : 'Add Text'}</span>
+                </button>
 
-          {/* Duplicate */}
-          <button
-            onClick={() => onDuplicateItem(selected)}
-            className="p-1 text-neutral-300 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-            title="Duplicate item"
-          >
-            <Copy className="w-3.5 h-3.5" />
-          </button>
+                {shapeItem?.text && (
+                  <button
+                    onClick={() => {
+                      if (shapeItem?.text) {
+                        navigator.clipboard.writeText(shapeItem.text);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1800);
+                        onCopyText?.(shapeItem.text);
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                    title="Copy shape text (Ctrl+C)"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-neutral-500" />}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                )}
 
-          {/* Delete */}
-          <button
-            onClick={() => onDeleteItem(item.id, selected.type)}
-            className="p-1 text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded-md transition-colors"
-            title="Delete item"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+                {/* Shape Color Picker Trigger */}
+                <button
+                  onClick={() => setShowColorPopover((prev) => !prev)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Change shape colors & stroke"
+                >
+                  <Palette className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Color</span>
+                </button>
+              </>
+            )}
 
-          <div className="w-[1px] h-3.5 bg-neutral-700 mx-0.5" />
-
-          {/* Close Settings Bar */}
-          <button
-            onClick={() => {
-              setShowSettingsBar(false);
-              setShowColorPopover(false);
-            }}
-            className="p-1 text-neutral-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-            title="Hide settings bar"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Charcoal Shape Color Popover */}
-      {showSettingsBar && isShape && showColorPopover && (
-        <div
-          style={{
-            position: 'absolute',
-            top: -195,
-            left: '50%',
-            transform: 'translateX(-50%)',
-          }}
-          className="bg-[#18181B] text-neutral-200 p-3 rounded-2xl shadow-2xl border border-neutral-700/80 pointer-events-auto z-50 flex flex-col gap-2.5 min-w-[240px]"
-        >
-          <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
-            <span className="text-[10px] font-semibold tracking-wider uppercase text-neutral-400">
-              Shape Appearance
-            </span>
+            {/* Connect to other canvas items */}
             <button
-              onClick={() => setShowColorPopover(false)}
-              className="text-[11px] text-neutral-400 hover:text-white"
+              onClick={() => {
+                onStartConnectorDrag?.(item.id, 'right', itemX + itemWidth, itemY + itemHeight / 2);
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+              title="Connect to other elements"
             >
-              Done
+              <Workflow className="w-3.5 h-3.5 text-blue-500" />
+              <span>Connect</span>
             </button>
-          </div>
 
-          {/* Fill Color */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] uppercase font-medium text-neutral-400">Fill Color</span>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {SHAPE_FILL_PRESETS.map((f) => (
-                <button
-                  key={f.label}
-                  onClick={() => {
-                    onUpdateShape({ ...shapeItem!, fillColor: f.value });
-                    onCommitTransform?.();
-                  }}
-                  className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 ${
-                    shapeItem?.fillColor === f.value
-                      ? 'ring-2 ring-white scale-110 border-black'
-                      : 'border-white/20'
-                  }`}
-                  style={{
-                    backgroundColor: f.value === 'transparent' ? 'transparent' : f.value,
-                    backgroundImage:
-                      f.value === 'transparent'
-                        ? 'linear-gradient(45deg, #444 25%, transparent 25%), linear-gradient(-45deg, #444 25%, transparent 25%)'
-                        : undefined,
-                    backgroundSize: '6px 6px',
-                  }}
-                  title={f.label}
-                />
-              ))}
-            </div>
-          </div>
+            {/* Duplicate */}
+            <button
+              onClick={() => onDuplicateItem(selected)}
+              className="p-1 text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 rounded-md transition-colors cursor-pointer"
+              title="Duplicate item"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
 
-          {/* Stroke Color */}
-          <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800">
-            <span className="text-[10px] uppercase font-medium text-neutral-400">Outline Color</span>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {SHAPE_STROKE_PRESETS.map((s) => (
-                <button
-                  key={s.label}
-                  onClick={() => {
-                    onUpdateShape({ ...shapeItem!, strokeColor: s.value });
-                    onCommitTransform?.();
-                  }}
-                  className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 ${
-                    shapeItem?.strokeColor === s.value
-                      ? 'ring-2 ring-white scale-110 border-black'
-                      : 'border-white/20'
-                  }`}
-                  style={{ backgroundColor: s.value === 'transparent' ? 'transparent' : s.value }}
-                  title={s.label}
-                />
-              ))}
+            {/* Delete */}
+            <button
+              onClick={() => onDeleteItem(item.id, selected.type)}
+              className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
+              title="Delete item"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-[1px] h-3.5 bg-neutral-200 mx-0.5" />
+
+            {/* Close Settings Bar */}
+            <button
+              onClick={() => {
+                setShowSettingsBar(false);
+                setShowColorPopover(false);
+              }}
+              className="p-1 text-neutral-400 hover:text-neutral-800 hover:bg-neutral-100 rounded-md transition-colors cursor-pointer"
+              title="Hide settings bar"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Clean Shape Color Popover */}
+      <AnimatePresence>
+        {showSettingsBar && isShape && showColorPopover && (
+          <motion.div
+            initial={{ scaleX: 0.15, scaleY: 0.1, y: 15, opacity: 0 }}
+            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
+            exit={{ scaleX: 0.15, scaleY: 0.1, y: 15, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 440, damping: 26, mass: 0.7 }}
+            style={{
+              position: 'absolute',
+              top: -195,
+              left: '50%',
+              x: '-50%',
+              transformOrigin: 'bottom center',
+            }}
+            className="bg-white/95 text-neutral-800 p-3 rounded-2xl shadow-2xl border border-neutral-200/90 backdrop-blur-xl pointer-events-auto z-50 flex flex-col gap-2.5 min-w-[240px]"
+          >
+            <div className="flex items-center justify-between pb-1 border-b border-neutral-100">
+              <span className="text-[10px] font-semibold tracking-wider uppercase text-neutral-500">
+                Shape Appearance
+              </span>
+              <button
+                onClick={() => setShowColorPopover(false)}
+                className="text-[11px] text-neutral-500 hover:text-neutral-900 cursor-pointer"
+              >
+                Done
+              </button>
             </div>
-          </div>
-        </div>
-      )}
+
+            {/* Fill Color */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] uppercase font-medium text-neutral-500">Fill Color</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {SHAPE_FILL_PRESETS.map((f) => (
+                  <button
+                    key={f.label}
+                    onClick={() => {
+                      onUpdateShape({ ...shapeItem!, fillColor: f.value });
+                      onCommitTransform?.();
+                    }}
+                    className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 cursor-pointer ${
+                      shapeItem?.fillColor === f.value
+                        ? 'ring-2 ring-neutral-900 scale-110 border-white'
+                        : 'border-neutral-300'
+                    }`}
+                    style={{
+                      backgroundColor: f.value === 'transparent' ? 'transparent' : f.value,
+                      backgroundImage:
+                        f.value === 'transparent'
+                          ? 'linear-gradient(45deg, #cbd5e1 25%, transparent 25%), linear-gradient(-45deg, #cbd5e1 25%, transparent 25%)'
+                          : undefined,
+                      backgroundSize: '6px 6px',
+                    }}
+                    title={f.label}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Stroke Color */}
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
+              <span className="text-[10px] uppercase font-medium text-neutral-500">Outline Color</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {SHAPE_STROKE_PRESETS.map((s) => (
+                  <button
+                    key={s.label}
+                    onClick={() => {
+                      onUpdateShape({ ...shapeItem!, strokeColor: s.value });
+                      onCommitTransform?.();
+                    }}
+                    className={`w-5 h-5 rounded-full border transition-transform hover:scale-110 cursor-pointer ${
+                      shapeItem?.strokeColor === s.value
+                        ? 'ring-2 ring-neutral-900 scale-110 border-white'
+                        : 'border-neutral-300'
+                    }`}
+                    style={{ backgroundColor: s.value === 'transparent' ? 'transparent' : s.value }}
+                    title={s.label}
+                  />
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Active Shape Text Area (Interactive Text inside ANY Shape or Sticky Note when editing) */}
       {isShape && isEditingShapeText && (
@@ -691,6 +806,55 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
         className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
         title="Resize bottom-left"
       />
+
+      {/* 4 Dynamic Curvy Flowchart Connection Anchors on all 4 sides */}
+      {/* Top Anchor */}
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onStartConnectorDrag?.(item.id, 'top', itemX + itemWidth / 2, itemY);
+        }}
+        className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+        title="Drag connector from top side"
+      >
+        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+      </div>
+
+      {/* Right Anchor */}
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onStartConnectorDrag?.(item.id, 'right', itemX + itemWidth, itemY + itemHeight / 2);
+        }}
+        className="absolute top-1/2 -right-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+        title="Drag connector from right side"
+      >
+        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+      </div>
+
+      {/* Bottom Anchor */}
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onStartConnectorDrag?.(item.id, 'bottom', itemX + itemWidth / 2, itemY + itemHeight);
+        }}
+        className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+        title="Drag connector from bottom side"
+      >
+        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+      </div>
+
+      {/* Left Anchor */}
+      <div
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onStartConnectorDrag?.(item.id, 'left', itemX, itemY + itemHeight / 2);
+        }}
+        className="absolute top-1/2 -left-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+        title="Drag connector from left side"
+      >
+        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+      </div>
     </div>
   );
 };

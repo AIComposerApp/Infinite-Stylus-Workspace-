@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Viewport,
   Stroke,
@@ -9,6 +10,7 @@ import {
   CanvasImageItem,
   CanvasShapeItem,
   CanvasChecklistItem,
+  CanvasConnectorItem,
 } from '@/types/canvas';
 import { Compass, Maximize2, Minimize2, Navigation, ZoomIn, ZoomOut } from 'lucide-react';
 
@@ -20,6 +22,7 @@ interface CanvasMiniRadarProps {
   images: CanvasImageItem[];
   shapes: CanvasShapeItem[];
   checklists: CanvasChecklistItem[];
+  connectors?: CanvasConnectorItem[];
   onNavigateViewport: (newViewport: Viewport) => void;
   onFitToContent: () => void;
 }
@@ -32,6 +35,7 @@ export const CanvasMiniRadar: React.FC<CanvasMiniRadarProps> = ({
   images,
   shapes,
   checklists,
+  connectors = [],
   onNavigateViewport,
   onFitToContent,
 }) => {
@@ -202,27 +206,50 @@ export const CanvasMiniRadar: React.FC<CanvasMiniRadarProps> = ({
     setIsNavDragging(false);
   };
 
-  // When collapsed: show minimal, unobtrusive pill with zoom & compass
-  if (!isOpen) {
-    return (
-      <button
-        id="canvas-constellation-radar-toggle"
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-20 right-3.5 z-20 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white/90 hover:bg-white border border-neutral-200/90 shadow-sm backdrop-blur-md transition-all active:scale-95 select-none"
-        title="Open canvas navigator"
-      >
-        <Compass className="w-3.5 h-3.5 text-neutral-500" />
-        <span className="text-[11px] font-mono text-neutral-500">{Math.round(viewport.zoom * 100)}%</span>
-      </button>
-    );
-  }
-
   return (
     <div
-      id="canvas-constellation-radar"
-      className="fixed bottom-20 right-3.5 z-20 flex flex-col items-end gap-1.5 pointer-events-auto select-none"
+      id="canvas-constellation-radar-root"
+      className="fixed bottom-20 right-3.5 z-20 pointer-events-auto select-none"
     >
+      <AnimatePresence mode="wait" initial={false}>
+        {!isOpen ? (
+          <motion.button
+            key="radar-collapsed-pill"
+            id="canvas-constellation-radar-toggle"
+            type="button"
+            onClick={() => setIsOpen(true)}
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.85, opacity: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: 440,
+              damping: 26,
+              mass: 0.7,
+            }}
+            style={{ transformOrigin: 'bottom right' }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-neutral-600 hover:text-neutral-900 bg-white/90 hover:bg-white border border-neutral-200/90 shadow-md backdrop-blur-md transition-colors active:scale-95 cursor-pointer select-none"
+            title="Open canvas navigator"
+          >
+            <Compass className="w-3.5 h-3.5 text-neutral-500" />
+            <span className="text-[11px] font-mono text-neutral-600">{Math.round(viewport.zoom * 100)}%</span>
+          </motion.button>
+        ) : (
+          <motion.div
+            key="radar-expanded-card"
+            id="canvas-constellation-radar"
+            initial={{ scaleX: 0.35, scaleY: 0.15, opacity: 0, y: 15 }}
+            animate={{ scaleX: 1, scaleY: 1, opacity: 1, y: 0 }}
+            exit={{ scaleX: 0.35, scaleY: 0.15, opacity: 0, y: 15 }}
+            transition={{
+              type: 'spring',
+              stiffness: 440,
+              damping: 26,
+              mass: 0.7,
+            }}
+            style={{ transformOrigin: 'bottom right' }}
+            className="flex flex-col items-end gap-1.5"
+          >
       {/* Mini Radar Panel */}
       <div className="bg-white/95 backdrop-blur-md text-neutral-800 border border-neutral-200/90 rounded-2xl p-2.5 shadow-lg transition-all duration-200">
         <div className="flex items-center justify-between pb-1.5 px-0.5 border-b border-neutral-100 text-[11px] font-medium text-neutral-500">
@@ -399,6 +426,9 @@ export const CanvasMiniRadar: React.FC<CanvasMiniRadarProps> = ({
           </div>
         </div>
       </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
