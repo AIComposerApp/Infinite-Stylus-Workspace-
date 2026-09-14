@@ -32,8 +32,8 @@ async function generateWithFallback(options: {
         contents: options.contents,
         config: {
           systemInstruction: options.systemInstruction,
-          temperature: 0.7,
-          maxOutputTokens: 300,
+          temperature: 0.4,
+          maxOutputTokens: 800,
         },
       });
 
@@ -69,23 +69,25 @@ function cleanHandwritingOutput(raw: string): string {
   if (!raw) return "";
 
   let cleaned = raw
-    // Strip bold/italic markdown like **bold**, *italic*, __bold__, _italic_
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
+    // Strip bold/italic markdown like ***bold***, **bold**, *italic*, ___bold___, __bold__, _italic_
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
+    .replace(/_{1,3}([^_]+)_{1,3}/g, "$1")
+    // Remove any remaining stray asterisks anywhere
+    .replace(/\*/g, "")
+    // Remove markdown headers like # Title, ## Subtitle, ### Section
+    .replace(/^[\s]*#+\s*/gm, "")
     // Strip bullet dashes, asterisks, pluses or bullet points at the start of lines
     .replace(/^[\s]*[-*+•]\s+/gm, "")
-    // Strip numbered list markers at start of lines
+    // Strip numbered list markers at start of lines (1. Item -> Item)
     .replace(/^[\s]*\d+[\.\)]\s+/gm, "")
-    // Strip markdown headers like ### Header
-    .replace(/^[\s]*#+\s+/gm, "")
-    // Strip blockquotes and backticks
+    // Strip blockquotes (> Quote)
     .replace(/^[\s]*>\s+/gm, "")
+    // Strip backticks or tildes
     .replace(/[`~]/g, "")
-    // Remove any remaining stray asterisks or dashes used as decorations
-    .replace(/\*/g, "")
-    .replace(/^--+\s*/gm, "")
+    // Strip markdown horizontal rules (---, ___, ===)
+    .replace(/^[\s]*[-=_]{3,}\s*$/gm, "")
+    // Strip bracketed markdown links [text](url) -> text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     // Normalize newlines (no more than two consecutive)
     .replace(/(\r\n|\r|\n){3,}/g, "\n\n")
     .trim();
@@ -105,15 +107,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const systemInstruction = `You are an intelligent note-taking and writing companion writing directly onto the user's infinite stylus canvas in organic handwritten ink.
-STRICT CONTENT MANDATES:
-1. Provide DIRECT, SUBSTANTIVE, and HELPFUL answers, continuations, or solutions.
-2. NEVER output your internal "thought process", meta-commentary, or analysis of the user's writing (NEVER say "Examining this...", "Distilling the essence...", "Connecting ideas...", "I am thinking about...", "Here is my thought process:"). Output the actual concrete content directly.
-3. If the user asks a question, answer it directly and factually.
-4. If the user writes or pastes notes, continue the text directly with the next logical ideas, steps, synthesis, or details.
-5. NEVER use Markdown syntax. Absolutely DO NOT include asterisks (* or **), bullet dashes (-), numbered list markers (1.), hashtags (#), backticks, or bracketed labels.
-6. Write in clean, fluid, natural human sentences (2 to 4 sentences).
-7. NEVER sound like a generic chatbot. Do NOT use canned greetings like "Certainly!", "Sure thing", "Here are some ideas", or "As an AI".`;
+    const systemInstruction = `You are an exceptionally insightful, thoughtful, and intelligent AI creative assistant writing handwritten thoughts directly onto the user's canvas notes.
+CRITICAL FORMATTING MANDATES:
+1. Provide THOROUGH, HIGH-QUALITY, and GENUINELY SUBSTANTIVE answers, continuations, insights, and solutions.
+2. NEVER output asterisks (* or **), markdown bold or italics, bullet symbols, hashtags (#), backticks, or bracketed labels. Clean plain text only.
+3. NEVER output meta-commentary about your own thoughts (do NOT say "Here is what I think", "Let me examine this", "As an AI"). Output the actual ideas and answers directly.
+4. If the user asks a question, answer it clearly, deeply, and accurately.
+5. If the user has brainstorming notes, continue them with brilliant connected ideas, strategic next steps, and profound observations.
+6. Express your answer in articulate, beautifully flowing human paragraphs without any markdown clutter.`;
 
     let contents: any;
     if (imageBase64) {

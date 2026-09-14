@@ -45,6 +45,7 @@ interface CanvasItemTransformOverlayProps {
   onDeselect: () => void;
   onStartConnectorDrag?: (itemId: string, side: ConnectorAnchorSide, startCanvasX: number, startCanvasY: number) => void;
   onCopyText?: (text: string) => void;
+  onEditText?: (textId: string) => void;
 }
 
 type ResizeHandle = 'nw' | 'ne' | 'se' | 'sw';
@@ -88,6 +89,7 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   onDeselect,
   onStartConnectorDrag,
   onCopyText,
+  onEditText,
 }) => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [resizingHandle, setResizingHandle] = useState<ResizeHandle | null>(null);
@@ -95,6 +97,9 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   const [isEditingShapeText, setIsEditingShapeText] = useState<boolean>(false);
   const [showSettingsBar, setShowSettingsBar] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+
+  const lastOverlayTapTimeRef = useRef<number>(0);
+  const lastOverlayTapPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [prevSelectedId, setPrevSelectedId] = useState<string | null>(null);
   const currentSelectedId = selected?.item.id || null;
@@ -337,12 +342,14 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   const isStickyNote = isShape && shapeItem?.type === 'sticky-note';
 
   const textBounds = isText
-    ? calculateCanvasTextBounds(textItem?.text || '', item.x, item.y, textItem?.width || 720)
+    ? calculateCanvasTextBounds(textItem?.text || '', item.x, item.y, textItem?.width || 640)
     : null;
 
   const itemX = item.x;
   const itemY = item.y;
-  const itemWidth = textBounds ? textBounds.width : Math.max(20, (item as { width?: number }).width || 240);
+  const itemWidth = isText
+    ? (textItem?.width || (textBounds ? textBounds.width : 240))
+    : (textBounds ? textBounds.width : Math.max(20, (item as { width?: number }).width || 240));
   const itemHeight = textBounds ? textBounds.height : Math.max(20, (item as { height?: number }).height || 120);
 
   // Screen coordinates
@@ -354,6 +361,29 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   // Handle Drag Move initiation
   const handleDragStart = (e: React.PointerEvent) => {
     e.stopPropagation();
+
+    // Fast double-tap detection for touch/stylus
+    const now = Date.now();
+    const isDoubleTap =
+      now - lastOverlayTapTimeRef.current < 350 &&
+      Math.hypot(e.clientX - lastOverlayTapPosRef.current.x, e.clientY - lastOverlayTapPosRef.current.y) < 25;
+
+    lastOverlayTapTimeRef.current = now;
+    lastOverlayTapPosRef.current = { x: e.clientX, y: e.clientY };
+
+    if (isDoubleTap) {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      if (isText && textItem) {
+        onEditText?.(textItem.id);
+        return;
+      }
+      if (isShape) {
+        setIsEditingShapeText(true);
+        setTimeout(() => shapeTextareaRef.current?.focus(), 50);
+        return;
+      }
+    }
+
     isDraggingRef.current = true;
     setIsDragging(true);
     pointerMovedRef.current = false;
@@ -405,13 +435,16 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
       <div
         className="absolute inset-0 border-2 border-[#18181B] bg-black/[0.001] ring-1 ring-black/15 rounded-sm pointer-events-auto cursor-move select-none"
         onPointerDown={handleDragStart}
-        onDoubleClick={() => {
-          if (isShape) {
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (isText && textItem) {
+            onEditText?.(textItem.id);
+          } else if (isShape) {
             setIsEditingShapeText(true);
             setTimeout(() => shapeTextareaRef.current?.focus(), 50);
           }
         }}
-        title="Drag anywhere to move • Double-click to edit text"
+        title="Drag anywhere to move • Double-click or double-tap to edit text"
       >
         {/* Non-blocking live text preview when not in active typing mode */}
         {isShape && !isEditingShapeText && shapeItem?.text && (
@@ -533,23 +566,39 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
               </>
             )}
 
-            {/* Text Specific Controls: Copy */}
+            {/* Text Specific Controls: Edit & Copy */}
             {isText && (
-              <button
-                onClick={() => {
-                  if (textItem?.text) {
-                    navigator.clipboard.writeText(textItem.text);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1800);
-                    onCopyText?.(textItem.text);
-                  }
-                }}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
-                title="Copy text note (Ctrl+C)"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-neutral-500" />}
-                <span>{copied ? 'Copied' : 'Copy'}</span>
-              </button>
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (textItem) {
+                      onEditText?.(textItem.id);
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Edit text note"
+                >
+                  <Type className="w-3.5 h-3.5 text-neutral-500" />
+                  <span>Edit</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (textItem?.text) {
+                      navigator.clipboard.writeText(textItem.text);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1800);
+                      onCopyText?.(textItem.text);
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 rounded-lg transition-colors cursor-pointer"
+                  title="Copy text note (Ctrl+C)"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-neutral-500" />}
+                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+              </>
             )}
 
             {/* Shape Specific Controls: Text, Copy & Colors */}

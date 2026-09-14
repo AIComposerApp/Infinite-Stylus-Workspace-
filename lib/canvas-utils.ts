@@ -41,7 +41,7 @@ export function calculateCanvasTextBounds(
   text: string,
   x: number,
   y: number,
-  maxWidth: number = 720,
+  maxWidth: number = 640,
   lineHeight: number = 32,
   charWidthApprox: number = 11.5
 ): { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } {
@@ -601,11 +601,10 @@ export function drawCanvasShape(ctx: CanvasRenderingContext2D, shape: CanvasShap
     ctx.fillStyle = strokeColor || '#1E1E1E';
     ctx.fill();
   } else if (type === 'sticky-note') {
-    // Sticky note with soft shadow & folded corner paper look
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 4;
+    // High-performance clean paper drop tint (avoids GPU blur pipeline stall during zoom/pan)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+    ctx.fillRect(x + 2, y + 2, width, height);
+
     ctx.fillStyle = fillColor || '#FEF08A';
     ctx.beginPath();
     if (typeof (ctx as any).roundRect === 'function') {
@@ -614,7 +613,6 @@ export function drawCanvasShape(ctx: CanvasRenderingContext2D, shape: CanvasShap
       ctx.rect(x, y, width, height);
     }
     ctx.fill();
-    ctx.restore();
 
     ctx.strokeStyle = strokeColor || 'rgba(0, 0, 0, 0.08)';
     ctx.lineWidth = 1;
@@ -1271,5 +1269,37 @@ export function drawCurvyConnector(
   }
 
   ctx.restore();
+}
+
+/**
+ * Strips all markdown asterisks (*, **), bullets, dashes, hashtags, and code formatting,
+ * ensuring AI outputs appear as clean, natural handwriting on the canvas.
+ */
+export function cleanAiOutput(raw: string): string {
+  if (!raw) return '';
+
+  return raw
+    // Strip bold/italic markdown formatting: ***text***, **text**, *text*, ___text___, __text__, _text_
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+    .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
+    // Strip any remaining stray asterisks anywhere in the string
+    .replace(/\*/g, '')
+    // Strip markdown headers (# Header, ## Subheader)
+    .replace(/^[\s]*#+\s*/gm, '')
+    // Strip bullet dashes, pluses, bullets (- Item, + Item, • Item)
+    .replace(/^[\s]*[-+•]\s+/gm, '')
+    // Strip numbered list markers at start of lines (1. Item, 1) Item)
+    .replace(/^[\s]*\d+[\.\)]\s+/gm, '')
+    // Strip blockquotes (> Quote)
+    .replace(/^[\s]*>\s+/gm, '')
+    // Strip backticks or tildes (`code`, ```code```)
+    .replace(/[`~]/g, '')
+    // Strip markdown dividers (---, ___, ===)
+    .replace(/^[\s]*[-=_]{3,}\s*$/gm, '')
+    // Strip markdown links [label](url) -> label
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Normalize excessive newlines (max 2 consecutive)
+    .replace(/(\r\n|\r|\n){3,}/g, '\n\n')
+    .trim();
 }
 

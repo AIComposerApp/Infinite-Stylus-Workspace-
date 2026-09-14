@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { HelpCircle, X, Type, Workflow, Move, MousePointer, Copy, Sparkles, Command } from 'lucide-react';
+import React from 'react';
+import { X, Type, Workflow, Move, MousePointer, Copy, Sparkles, Command } from 'lucide-react';
 
 interface CanvasOnboardingGuideProps {
   isOpen: boolean;
@@ -12,78 +12,15 @@ interface CanvasOnboardingGuideProps {
 export const CanvasOnboardingGuide: React.FC<CanvasOnboardingGuideProps> = ({
   isOpen,
   onClose,
-  onOpen,
 }) => {
-  const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    try {
-      return localStorage.getItem('stylus_intro_banner_dismissed') === 'true';
-    } catch {
-      return true;
-    }
-  });
-
-  const handleDismissBanner = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setIsBannerDismissed(true);
-    try {
-      localStorage.setItem('stylus_intro_banner_dismissed', 'true');
-    } catch {
-      // Ignored
-    }
-  };
+  if (!isOpen) return null;
 
   return (
-    <>
-      {/* Discreet Non-Intrusive Quick-Tip Pill (Top-Center) */}
-      {!isBannerDismissed && (
-        <div
-          id="canvas-quick-tips-banner"
-          className="fixed top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2.5 bg-white/95 backdrop-blur-md border border-neutral-200/90 shadow-sm rounded-full px-3.5 py-1.5 text-xs text-neutral-700 animate-in fade-in slide-in-from-top-2 duration-200 select-none max-w-[92vw]"
-        >
-          <div className="flex items-center gap-1.5 font-medium">
-            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-            <span>Double-click canvas to type</span>
-            <span className="text-neutral-300">•</span>
-            <span>Wheel to zoom</span>
-            <span className="text-neutral-300">•</span>
-            <span>Drag blue dots on items to link</span>
-          </div>
-
-          <button
-            onClick={() => onOpen?.()}
-            className="text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer ml-1"
-          >
-            Guide
-          </button>
-
-          <button
-            onClick={handleDismissBanner}
-            className="text-neutral-400 hover:text-neutral-700 p-0.5 rounded-full hover:bg-neutral-100 transition-colors ml-0.5"
-            title="Dismiss banner"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Floating ? Help Trigger Button (Top-Right beside Time Machine) */}
-      <button
-        id="canvas-help-guide-trigger"
-        onClick={onOpen}
-        className="flex items-center justify-center w-8 h-8 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-xs text-neutral-600 hover:text-neutral-950 hover:bg-white transition-all cursor-pointer select-none"
-        title="Controls & Shortcuts Guide (?)"
-      >
-        <HelpCircle className="w-4 h-4" strokeWidth={1.9} />
-      </button>
-
-      {/* Full Help Modal / Guide Dialog */}
-      {isOpen && (
-        <div
-          id="canvas-guide-modal-overlay"
-          onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-xs p-4 pointer-events-auto animate-in fade-in duration-150 select-none"
-        >
+    <div
+      id="canvas-guide-modal-overlay"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-xs p-4 pointer-events-auto animate-in fade-in duration-150 select-none"
+    >
           <div
             id="canvas-guide-modal-content"
             onClick={(e) => e.stopPropagation()}
@@ -189,7 +126,5 @@ export const CanvasOnboardingGuide: React.FC<CanvasOnboardingGuideProps> = ({
             </div>
           </div>
         </div>
-      )}
-    </>
   );
 };

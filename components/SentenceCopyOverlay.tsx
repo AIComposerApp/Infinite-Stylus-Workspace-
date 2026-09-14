@@ -54,60 +54,58 @@ export const SentenceCopyOverlay: React.FC<SentenceCopyOverlayProps> = ({
             key={s.id}
             style={{
               position: 'absolute',
-              left: `${sx - 6}px`,
-              top: `${sy - 4}px`,
-              width: `${sw + 12}px`,
-              height: `${sh + 8}px`,
+              left: `${sx - 4}px`,
+              top: `${sy - 2}px`,
+              width: `${sw + 8}px`,
+              height: `${sh + 4}px`,
             }}
-            className="rounded-lg bg-amber-200/45 ring-2 ring-amber-400/50 mix-blend-multiply transition-all pointer-events-none"
+            className="rounded bg-amber-300/25 ring-1 ring-amber-400/35 mix-blend-multiply transition-all pointer-events-none"
           />
         );
       })}
 
-      {/* Floating Copy Popup */}
+      {/* Discreet, Non-intrusive Floating Copy Tooltip */}
       <AnimatePresence>
         <motion.div
-          initial={{ opacity: 0, scale: 0.85 }}
+          initial={{ opacity: 0, scale: 0.95 }}
           animate={{
             opacity: 1,
             scale: 1,
-            x: popupX - 60,
+            x: popupX - 45,
             y: popupY,
           }}
-          exit={{ opacity: 0, scale: 0.85 }}
-          transition={{ type: 'spring', stiffness: 450, damping: 28 }}
-          className="fixed top-0 left-0 pointer-events-auto flex items-center gap-1.5 p-1 bg-[#18181B] text-white rounded-full border border-neutral-700/80 shadow-2xl"
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.15 }}
+          className="fixed top-0 left-0 pointer-events-auto flex items-center gap-1 px-1.5 py-1 bg-neutral-900/90 text-white rounded-full shadow-lg border border-neutral-800 backdrop-blur-md z-40 text-[11px]"
         >
           <button
             onClick={onCopy}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full font-medium transition-colors cursor-pointer ${
               isCopied
-                ? 'bg-neutral-700 text-white'
-                : 'bg-neutral-800 text-white hover:bg-neutral-700'
+                ? 'bg-neutral-800 text-emerald-400'
+                : 'text-neutral-200 hover:text-white hover:bg-neutral-800'
             }`}
-            title="Copy as plain text"
+            title="Copy text (Ctrl+C)"
           >
             {isCopied ? (
               <>
-                <Check className="w-3.5 h-3.5 stroke-[2.2]" />
+                <Check className="w-3 h-3 text-emerald-400 stroke-[2.2]" />
                 <span>Copied</span>
               </>
             ) : (
               <>
-                <Copy className="w-3.5 h-3.5" strokeWidth={1.8} />
-                <span>
-                  Copy {selectedSentences.length > 1 ? `(${selectedSentences.length})` : 'Text'}
-                </span>
+                <Copy className="w-3 h-3 stroke-[1.8]" />
+                <span>Copy</span>
               </>
             )}
           </button>
 
           <button
             onClick={onClearSelection}
-            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-1 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
             title="Deselect"
           >
-            <X className="w-3.5 h-3.5" strokeWidth={1.8} />
+            <X className="w-3 h-3 stroke-[2]" />
           </button>
         </motion.div>
       </AnimatePresence>

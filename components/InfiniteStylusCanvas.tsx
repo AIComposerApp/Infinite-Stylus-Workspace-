@@ -38,6 +38,7 @@ import {
   getAnchorPointForSide,
   resolveConnectorEndpoint,
   computeCurvyConnectorControlPoints,
+  cleanAiOutput,
 } from '@/lib/canvas-utils';
 import { generateOfflineAssistantThought } from '@/lib/offline-intelligence';
 import { LiquidBottomDock } from '@/components/LiquidBottomDock';
@@ -51,7 +52,7 @@ import { CanvasMiniRadar } from '@/components/CanvasMiniRadar';
 import { CanvasTimeMachine } from '@/components/CanvasTimeMachine';
 import { CanvasOnboardingGuide } from '@/components/CanvasOnboardingGuide';
 import { CanvasConnectorActionOverlay } from '@/components/CanvasConnectorActionOverlay';
-import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2, HelpCircle, Workflow, Type, Copy, Compass } from 'lucide-react';
+import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2, HelpCircle, Workflow, Type, Copy, Compass, GripHorizontal } from 'lucide-react';
 
 // Living Ink: Detect natural scratch-out / scribble gesture
 const isScratchOutGesture = (points: Point[]): boolean => {
@@ -258,6 +259,16 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Active text block typing session (blinking vertical caret)
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const activeInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [isDraggingActiveText, setIsDraggingActiveText] = useState<boolean>(false);
+  const isDraggingActiveTextRef = useRef<boolean>(false);
+  const activeTextDragRef = useRef<{
+    startX: number;
+    startY: number;
+    itemX: number;
+    itemY: number;
+    textId: string;
+    hasMoved: boolean;
+  } | null>(null);
 
   // History for Undo / Redo
   const [history, setHistory] = useState<{
@@ -312,9 +323,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const prevToolRef = useRef<StylusToolType>('pan');
   const [isPanningState, setIsPanningState] = useState<boolean>(false);
 
-  // Direct canvas item dragging for shapes and images
+  // Direct canvas item dragging for shapes, images, and text
   const directDragItemRef = useRef<{
-    type: 'shape' | 'image';
+    type: 'shape' | 'image' | 'text';
     id: string;
     startClientX: number;
     startClientY: number;
@@ -322,6 +333,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     startItemY: number;
   } | null>(null);
   const isDirectDraggingItemRef = useRef<boolean>(false);
+  const isTextHighlightDragRef = useRef<boolean>(false);
 
   // Multi-Touch Two-Finger Tracking (Pinch-to-Scale & Pan Move Anywhere)
   const activePointersRef = useRef<Map<number, { x: number; y: number; type: string }>>(new Map());
@@ -1440,6 +1452,28 @@ export const InfiniteStylusCanvas: React.FC = () => {
     scheduleDebouncedSave();
   }, [scheduleDebouncedSave]);
 
+  // Dynamic auto-grow for active text note input (prevents characters from cutting off on mobile and desktop)
+  const autoResizeActiveTextarea = useCallback(() => {
+    const el = activeInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(34 * viewportRef.current.zoom, el.scrollHeight)}px`;
+  }, []);
+
+  // Edit text note: clear transform selection and focus active input
+  const handleEditText = useCallback(
+    (textId: string) => {
+      setSelectedSentences([]);
+      setSelectedItem(null);
+      setActiveTextId(textId);
+      setTimeout(() => {
+        activeInputRef.current?.focus();
+        autoResizeActiveTextarea();
+      }, 40);
+    },
+    [autoResizeActiveTextarea]
+  );
+
   // Delete item from canvas
   const handleDeleteItem = useCallback(
     (id: string, type: 'image' | 'shape' | 'text') => {
@@ -1576,7 +1610,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
         }
 
         const data = await res.json();
-        const resultText = data.text || data.fallbackText;
+        const rawText = data.text || data.fallbackText;
+        const resultText = cleanAiOutput(rawText);
 
         if (resultText && resultText.trim()) {
           const spawnX = imageItem.x + imageItem.width + 40;
@@ -1855,7 +1890,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
         await new Promise((resolve) => setTimeout(resolve, remainingThinkingTime));
       }
 
-      const layout = layoutHandwrittenText(textResult, spawnX, spawnY);
+      const sanitizedResult = cleanAiOutput(textResult);
+      const layout = layoutHandwrittenText(sanitizedResult, spawnX, spawnY);
       const writingStartTime = Date.now();
 
       setThoughts((prev) =>
@@ -1906,20 +1942,70 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
   }, [activeTextId, triggerAssistantResponse]);
 
-  // Tap on canvas in Move & Type mode to select items, position cursor, or edit text
+  // Hit test against Canvas Text Items
+  const hitTestText = useCallback((pos: Point): CanvasTextItem | null => {
+    for (let i = canvasTextsRef.current.length - 1; i >= 0; i--) {
+      const txt = canvasTextsRef.current[i];
+      if (!txt.text) continue;
+      const bounds = calculateCanvasTextBounds(txt.text, txt.x, txt.y, txt.width || 640);
+      const pad = 12;
+      if (
+        pos.x >= bounds.minX - pad &&
+        pos.x <= bounds.maxX + pad &&
+        pos.y >= bounds.minY - pad &&
+        pos.y <= bounds.maxY + pad
+      ) {
+        return txt;
+      }
+    }
+    return null;
+  }, []);
+
+  // Hit test against Images
+  const hitTestImage = useCallback((pos: Point): CanvasImageItem | null => {
+    for (let i = imagesRef.current.length - 1; i >= 0; i--) {
+      const img = imagesRef.current[i];
+      const pad = 6;
+      if (
+        pos.x >= img.x - pad &&
+        pos.x <= img.x + img.width + pad &&
+        pos.y >= img.y - pad &&
+        pos.y <= img.y + img.height + pad
+      ) {
+        return img;
+      }
+    }
+    return null;
+  }, []);
+
+  // Hit test against Shapes and Sticky Notes
+  const hitTestShape = useCallback((pos: Point): CanvasShapeItem | null => {
+    for (let i = shapesRef.current.length - 1; i >= 0; i--) {
+      const shp = shapesRef.current[i];
+      const minX = Math.min(shp.x, shp.x + shp.width);
+      const maxX = Math.max(shp.x, shp.x + shp.width);
+      const minY = Math.min(shp.y, shp.y + shp.height);
+      const maxY = Math.max(shp.y, shp.y + shp.height);
+      const pad = shp.type === 'line' || shp.type === 'arrow' ? 20 : 6;
+      if (
+        pos.x >= minX - pad &&
+        pos.x <= maxX + pad &&
+        pos.y >= minY - pad &&
+        pos.y <= maxY + pad
+      ) {
+        return shp;
+      }
+    }
+    return null;
+  }, []);
+
+  // Tap on canvas to select items, position cursor, or edit text
   const handleCanvasTapToType = useCallback(
     (clientX: number, clientY: number) => {
       const canvasPos = screenToCanvas(clientX, clientY);
 
       // Check if user clicked an Image
-      const clickedImage = [...imagesRef.current].reverse().find(
-        (img) =>
-          canvasPos.x >= img.x &&
-          canvasPos.x <= img.x + img.width &&
-          canvasPos.y >= img.y &&
-          canvasPos.y <= img.y + img.height
-      );
-
+      const clickedImage = hitTestImage(canvasPos);
       if (clickedImage) {
         setSelectedItem({ type: 'image', item: clickedImage });
         setActiveTextId(null);
@@ -1927,20 +2013,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
 
       // Check if user clicked a Shape or Sticky Note
-      const clickedShape = [...shapesRef.current].reverse().find((shp) => {
-        const minX = Math.min(shp.x, shp.x + shp.width);
-        const maxX = Math.max(shp.x, shp.x + shp.width);
-        const minY = Math.min(shp.y, shp.y + shp.height);
-        const maxY = Math.max(shp.y, shp.y + shp.height);
-        const pad = shp.type === 'line' || shp.type === 'arrow' ? 20 : 6;
-        return (
-          canvasPos.x >= minX - pad &&
-          canvasPos.x <= maxX + pad &&
-          canvasPos.y >= minY - pad &&
-          canvasPos.y <= maxY + pad
-        );
-      });
-
+      const clickedShape = hitTestShape(canvasPos);
       if (clickedShape) {
         setSelectedItem({ type: 'shape', item: clickedShape });
         setActiveTextId(null);
@@ -1966,18 +2039,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
 
       // Check if user clicked an existing text item
-      const clickedItem = canvasTextsRef.current.find((item) => {
-        const lines = item.text ? item.text.split('\n') : [''];
-        const width = Math.max(80, Math.max(...lines.map((l) => l.length * 12)));
-        const height = Math.max(36, lines.length * 32);
-        return (
-          canvasPos.x >= item.x - 14 &&
-          canvasPos.x <= item.x + width + 28 &&
-          canvasPos.y >= item.y - 14 &&
-          canvasPos.y <= item.y + height + 14
-        );
-      });
-
+      const clickedItem = hitTestText(canvasPos);
       if (clickedItem) {
         if (currentTool === 'select') {
           setSelectedItem({ type: 'text', item: clickedItem });
@@ -1989,12 +2051,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
             activeInputRef.current?.focus();
           }, 30);
         }
-        return;
-      }
-
-      // Clicked on blank canvas space: if an item was selected, deselect it
-      if (selectedItem) {
-        setSelectedItem(null);
         return;
       }
 
@@ -2016,29 +2072,57 @@ export const InfiniteStylusCanvas: React.FC = () => {
       canvasTextsRef.current = updated;
       pushHistory(strokesRef.current, thoughtsRef.current, updated, imagesRef.current, shapesRef.current);
       setActiveTextId(newId);
+      setSelectedItem(null);
+      setSelectedSentences([]);
 
       setTimeout(() => {
         activeInputRef.current?.focus();
       }, 40);
     },
-    [screenToCanvas, currentColor, pushHistory, currentTool, selectedItem]
+    [screenToCanvas, hitTestImage, hitTestShape, hitTestText, currentColor, pushHistory, currentTool]
   );
 
-  // Update text for currently active typing item
+  // Cache wrapped lines for canvas text items to eliminate measureText recalculation on every frame
+  const textWrapCacheRef = useRef<Map<string, string[]>>(new Map());
+
+  // Clear text wrapping cache when web fonts finish loading so measureText uses real Kalam glyph metrics
+  useEffect(() => {
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.ready.then(() => {
+        textWrapCacheRef.current.clear();
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    autoResizeActiveTextarea();
+  }, [activeTextId, autoResizeActiveTextarea]);
+
+  // Update text for currently active typing item with real-time dynamic auto-growth
   const handleUpdateActiveText = useCallback(
     (newText: string) => {
       if (!activeTextId) return;
+      // Invalidate wrap cache for this text item
+      for (const key of textWrapCacheRef.current.keys()) {
+        if (key.startsWith(`${activeTextId}:`)) {
+          textWrapCacheRef.current.delete(key);
+        }
+      }
       setCanvasTexts((prev) => {
         const updated = prev.map((t) => (t.id === activeTextId ? { ...t, text: newText, updatedAt: Date.now() } : t));
         canvasTextsRef.current = updated;
         return updated;
       });
+      requestAnimationFrame(() => {
+        autoResizeActiveTextarea();
+      });
     },
-    [activeTextId]
+    [activeTextId, autoResizeActiveTextarea]
   );
 
   // Blur/finish typing
   const handleBlurActiveText = useCallback(() => {
+    if (isDraggingActiveTextRef.current) return;
     setCanvasTexts((prev) => {
       const activeItem = prev.find((t) => t.id === activeTextId);
       let updated = prev;
@@ -2052,11 +2136,91 @@ export const InfiniteStylusCanvas: React.FC = () => {
     setActiveTextId(null);
   }, [activeTextId, pushHistory]);
 
-  // Double-tap or Click Detection to select sentence
+  // Start dragging active text from the Move handle
+  const handleActiveTextMoveStart = useCallback(
+    (e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const currentActiveText = canvasTextsRef.current.find((t) => t.id === activeTextId);
+      if (!currentActiveText) return;
+
+      activeTextDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        itemX: currentActiveText.x,
+        itemY: currentActiveText.y,
+        textId: currentActiveText.id,
+        hasMoved: false,
+      };
+      isDraggingActiveTextRef.current = true;
+      setIsDraggingActiveText(true);
+
+      try {
+        if (e.currentTarget && typeof (e.currentTarget as HTMLElement).setPointerCapture === 'function') {
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+    },
+    [activeTextId]
+  );
+
+  // 120Hz window pointer listeners for moving active text seamlessly across any screen boundary
+  useEffect(() => {
+    if (!isDraggingActiveText) return;
+
+    const handleWindowPointerMove = (e: PointerEvent) => {
+      const drag = activeTextDragRef.current;
+      if (!drag) return;
+
+      const dx = (e.clientX - drag.startX) / viewportRef.current.zoom;
+      const dy = (e.clientY - drag.startY) / viewportRef.current.zoom;
+
+      if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 3) {
+        drag.hasMoved = true;
+      }
+
+      const newX = Math.round(drag.itemX + dx);
+      const newY = Math.round(drag.itemY + dy);
+
+      canvasTextsRef.current = canvasTextsRef.current.map((t) =>
+        t.id === drag.textId ? { ...t, x: newX, y: newY } : t
+      );
+      setCanvasTexts([...canvasTextsRef.current]);
+    };
+
+    const handleWindowPointerUp = (e: PointerEvent) => {
+      const drag = activeTextDragRef.current;
+      if (drag) {
+        if (drag.hasMoved) {
+          pushHistory(strokesRef.current, thoughtsRef.current, canvasTextsRef.current);
+          scheduleDebouncedSave();
+        }
+        activeTextDragRef.current = null;
+        isDraggingActiveTextRef.current = false;
+        setIsDraggingActiveText(false);
+
+        // Keep textarea focused so user can smoothly resume typing
+        setTimeout(() => {
+          activeInputRef.current?.focus();
+        }, 20);
+      }
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false });
+    window.addEventListener('pointerup', handleWindowPointerUp);
+    window.addEventListener('pointercancel', handleWindowPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+      window.removeEventListener('pointercancel', handleWindowPointerUp);
+    };
+  }, [isDraggingActiveText, pushHistory, scheduleDebouncedSave]);
+
+  // Double-tap or Click/Drag Detection to select sentence for unobtrusive copy (AI thoughts only, never canvas texts)
   const handleSentenceSelectAtCanvasPoint = useCallback(
     (canvasPos: Point): boolean => {
-      let hitSentence: ThoughtSentence | null = null;
-
+      // Hit test AI thoughts
       for (const thought of thoughts) {
         for (const sentence of thought.sentences) {
           const padding = 12;
@@ -2066,27 +2230,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
             canvasPos.y >= sentence.y - padding &&
             canvasPos.y <= sentence.y + sentence.height + padding
           ) {
-            hitSentence = sentence;
-            break;
+            setSelectedSentences((prev) => {
+              const exists = prev.some((s) => s.id === sentence.id);
+              if (exists) {
+                return prev.filter((s) => s.id !== sentence.id);
+              } else {
+                return [...prev, sentence];
+              }
+            });
+            return true;
           }
         }
-        if (hitSentence) break;
       }
 
-      if (hitSentence) {
-        setSelectedSentences((prev) => {
-          const exists = prev.some((s) => s.id === hitSentence!.id);
-          if (exists) {
-            return prev.filter((s) => s.id !== hitSentence!.id);
-          } else {
-            return [...prev, hitSentence!];
-          }
-        });
-        return true;
-      } else {
-        setSelectedSentences([]);
-        return false;
-      }
+      return false;
     },
     [thoughts]
   );
@@ -2108,12 +2265,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // Request low-latency direct-to-front-buffer context for Android & Samsung S-Pen
-    const ctx =
-      (canvas.getContext('2d', {
-        desynchronized: true,
-        alpha: false,
-      }) as CanvasRenderingContext2D | null) || canvas.getContext('2d');
+    // High-performance double-buffered 2D canvas context
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
@@ -2128,34 +2281,37 @@ export const InfiniteStylusCanvas: React.FC = () => {
     ctx.save();
     ctx.scale(dpr, dpr);
 
+    // Use latest viewport from ref for zero-latency 60/120fps hardware canvas rendering
+    const v = viewportRef.current;
+
     // Canvas Background
     ctx.fillStyle = '#FAF9F6';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw Infinite Dot Grid
-    const dotSpacing = 28 * viewport.zoom;
-    const startX = (viewport.x % dotSpacing + dotSpacing) % dotSpacing;
-    const startY = (viewport.y % dotSpacing + dotSpacing) % dotSpacing;
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.075)';
-    for (let x = startX; x < width; x += dotSpacing) {
-      for (let y = startY; y < height; y += dotSpacing) {
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(0.8, 1.2 * Math.min(1.2, viewport.zoom)), 0, Math.PI * 2);
-        ctx.fill();
+    // High-performance hardware blit dot grid (avoids thousands of path/arc allocations per frame)
+    const dotSpacing = 28 * v.zoom;
+    if (dotSpacing >= 10 && dotSpacing <= 320) {
+      const startX = ((v.x % dotSpacing) + dotSpacing) % dotSpacing;
+      const startY = ((v.y % dotSpacing) + dotSpacing) % dotSpacing;
+      const dotSize = Math.max(1, Math.min(2.0, 1.2 * v.zoom));
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.07)';
+      for (let x = startX; x < width; x += dotSpacing) {
+        for (let y = startY; y < height; y += dotSpacing) {
+          ctx.fillRect(x - dotSize / 2, y - dotSize / 2, dotSize, dotSize);
+        }
       }
     }
 
     // Apply Viewport Transform
-    ctx.translate(viewport.x, viewport.y);
-    ctx.scale(viewport.zoom, viewport.zoom);
+    ctx.translate(v.x, v.y);
+    ctx.scale(v.zoom, v.zoom);
 
     // 0. Draw Shapes & Sticky Notes (bottom layer)
     for (const shape of shapes) {
       drawCanvasShape(ctx, shape);
     }
 
-    // 0.5 Draw Imported Canvas Images
+    // 0.5 Draw Imported Canvas Images (lightweight crisp border, zero GPU blur pipeline stall)
     for (const imgItem of images) {
       let cached = imageCacheRef.current.get(imgItem.src);
       if (!cached) {
@@ -2165,18 +2321,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
         imageCacheRef.current.set(imgItem.src, cached);
       }
       if (cached.complete && cached.naturalWidth > 0) {
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
-        ctx.shadowBlur = 12;
-        ctx.shadowOffsetY = 4;
         ctx.drawImage(cached, imgItem.x, imgItem.y, imgItem.width, imgItem.height);
-        ctx.restore();
-
-        ctx.save();
         ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
         ctx.lineWidth = 1;
         ctx.strokeRect(imgItem.x, imgItem.y, imgItem.width, imgItem.height);
-        ctx.restore();
       }
     }
 
@@ -2219,42 +2367,50 @@ export const InfiniteStylusCanvas: React.FC = () => {
       }
     }
 
-    // 2.5 Draw Typed Canvas Text Items (in the exact same handwriting font Kalam/Caveat with line wrapping)
+    // 2.5 Draw Typed Canvas Text Items (in the exact same handwriting font Kalam/Caveat with cached line wrapping)
     for (const item of canvasTexts) {
       if (item.id === activeTextId) continue; // Rendered live in textarea overlay with blinking cursor
       if (!item.text || !item.text.trim()) continue;
 
       ctx.save();
-      ctx.font = '22px "Kalam", "Caveat", cursive';
+      ctx.font = '500 22px "Kalam", "Caveat", cursive';
       ctx.fillStyle = item.color || '#1E1E1E';
       ctx.textBaseline = 'top';
 
-      const rawLines = item.text.split('\n');
-      const maxLineWidth = 720;
-      const wrappedLines: string[] = [];
-      for (const rLine of rawLines) {
-        if (!rLine) {
-          wrappedLines.push('');
-          continue;
-        }
-        const words = rLine.split(' ');
-        let currentLine = words[0] || '';
-        for (let w = 1; w < words.length; w++) {
-          const testLine = `${currentLine} ${words[w]}`;
-          if (ctx.measureText(testLine).width > maxLineWidth) {
+      const maxLineWidth = item.width || 640;
+      const cacheKey = `${item.id}:${item.text}:${maxLineWidth}`;
+      let wrappedLines = textWrapCacheRef.current.get(cacheKey);
+
+      if (!wrappedLines) {
+        wrappedLines = [];
+        const rawLines = item.text.split('\n');
+        for (const rLine of rawLines) {
+          if (!rLine) {
+            wrappedLines.push('');
+            continue;
+          }
+          const words = rLine.split(/\s+/);
+          let currentLine = words[0] || '';
+          for (let w = 1; w < words.length; w++) {
+            const testLine = `${currentLine} ${words[w]}`;
+            if (ctx.measureText(testLine).width > maxLineWidth && currentLine.length > 0) {
+              wrappedLines.push(currentLine);
+              currentLine = words[w];
+            } else {
+              currentLine = testLine;
+            }
+          }
+          if (currentLine.length > 0) {
             wrappedLines.push(currentLine);
-            currentLine = words[w];
-          } else {
-            currentLine = testLine;
           }
         }
-        wrappedLines.push(currentLine);
+        textWrapCacheRef.current.set(cacheKey, wrappedLines);
       }
 
       const lineHeight = 32;
-      wrappedLines.forEach((line, index) => {
-        ctx.fillText(line, item.x, item.y + index * lineHeight);
-      });
+      for (let index = 0; index < wrappedLines.length; index++) {
+        ctx.fillText(wrappedLines[index], item.x, item.y + index * lineHeight);
+      }
       ctx.restore();
     }
 
@@ -2371,7 +2527,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     ctx.restore();
   }, [
-    viewport,
     strokes,
     thoughts,
     canvasTexts,
@@ -2479,8 +2634,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
     const screenX = e.clientX;
     const screenY = e.clientY;
 
-    // External mouse middle-click (button 1), right-click (button 2), spacebar held, or Pan tool: pan canvas
-    if (isMiddleOrRight || currentTool === 'pan' || isSpaceHeldRef.current) {
+    // External mouse middle-click (button 1), right-click (button 2), spacebar held: pan canvas
+    if (isMiddleOrRight || isSpaceHeldRef.current) {
       isPanningRef.current = true;
       setIsPanningState(true);
       lastPanPointRef.current = { x: screenX, y: screenY };
@@ -2493,17 +2648,82 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     const now = Date.now();
     const isDoubleTap =
-      now - lastTapTimeRef.current < 350 &&
-      Math.hypot(screenX - lastTapPosRef.current.x, screenY - lastTapPosRef.current.y) < 20;
+      now - lastTapTimeRef.current < 380 &&
+      Math.hypot(screenX - lastTapPosRef.current.x, screenY - lastTapPosRef.current.y) < 25;
 
     lastTapTimeRef.current = now;
     lastTapPosRef.current = { x: screenX, y: screenY };
 
     const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
 
-    // Direct Canvas Interaction for Shapes, Images, Connectors, and Text when not drawing with a pen tool
-    if (!isPenTool && !isMiddleOrRight) {
-      // 0. Hit test against Connectors
+    // 1. Double Tap Detection across all elements & canvas
+    if (isDoubleTap) {
+      // 1a. Double tap on an existing text item: activate typing mode
+      const hitTxt = hitTestText(canvasPos);
+      if (hitTxt) {
+        setSelectedSentences([]);
+        setSelectedItem(null);
+        setActiveTextId(hitTxt.id);
+        setTimeout(() => {
+          activeInputRef.current?.focus();
+          autoResizeActiveTextarea();
+        }, 40);
+        return;
+      }
+
+      // 1b. Double tap on an image: select it and allow moving immediately
+      const hitImg = hitTestImage(canvasPos);
+      if (hitImg) {
+        setSelectedItem({ type: 'image', item: hitImg });
+        directDragItemRef.current = {
+          type: 'image',
+          id: hitImg.id,
+          startClientX: screenX,
+          startClientY: screenY,
+          startItemX: hitImg.x,
+          startItemY: hitImg.y,
+        };
+        isDirectDraggingItemRef.current = true;
+        hasDraggedRef.current = false;
+        pointerDownPosRef.current = { x: screenX, y: screenY };
+        return;
+      }
+
+      // 1c. Double tap on a shape / sticky note: select it and allow moving immediately
+      const hitShp = hitTestShape(canvasPos);
+      if (hitShp) {
+        setSelectedItem({ type: 'shape', item: hitShp });
+        directDragItemRef.current = {
+          type: 'shape',
+          id: hitShp.id,
+          startClientX: screenX,
+          startClientY: screenY,
+          startItemX: hitShp.x,
+          startItemY: hitShp.y,
+        };
+        isDirectDraggingItemRef.current = true;
+        hasDraggedRef.current = false;
+        pointerDownPosRef.current = { x: screenX, y: screenY };
+        return;
+      }
+
+      // 1d. Double tap on an AI thought sentence: highlight to copy
+      const sentenceHit = handleSentenceSelectAtCanvasPoint(canvasPos);
+      if (sentenceHit) {
+        return;
+      }
+
+      // 1e. Double tap on empty canvas space: start typing text note!
+      setSelectedItem(null);
+      setSelectedSentences([]);
+      setSelectedConnectorId(null);
+      handleCanvasTapToType(screenX, screenY);
+      return;
+    }
+
+    // 2. Direct Non-Pen Canvas Interaction: Hand mode, Select tool, Text tool, Connectors
+    if (!isPenTool) {
+      // 2a. Hit test against Connectors
       const hitConn = hitTestConnector(canvasPos);
       if (hitConn) {
         setSelectedConnectorId(hitConn.id);
@@ -2513,63 +2733,24 @@ export const InfiniteStylusCanvas: React.FC = () => {
         setSelectedConnectorId(null);
       }
 
-      // 0.5 Direct typing if Text tool active
+      // 2b. Direct typing if Text tool active
       if (currentTool === 'text') {
         handleCanvasTapToType(screenX, screenY);
         return;
       }
 
-      // 0.6 Connector Tool active: initiate drag from under pointer
+      // 2c. Connector Tool active: initiate drag from under pointer
       if (currentTool === 'connector') {
-        const hitShp = [...shapesRef.current].reverse().find((s) => canvasPos.x >= s.x && canvasPos.x <= s.x + s.width && canvasPos.y >= s.y && canvasPos.y <= s.y + s.height);
-        const hitImg = [...imagesRef.current].reverse().find((i) => canvasPos.x >= i.x && canvasPos.x <= i.x + i.width && canvasPos.y >= i.y && canvasPos.y <= i.y + i.height);
-        const hitTxt = [...canvasTextsRef.current].reverse().find((t) => canvasPos.x >= t.x && canvasPos.x <= t.x + 200 && canvasPos.y >= t.y && canvasPos.y <= t.y + 60);
+        const hitShp = hitTestShape(canvasPos);
+        const hitImg = hitTestImage(canvasPos);
+        const hitTxt = hitTestText(canvasPos);
         const fromId = hitShp ? hitShp.id : hitImg ? hitImg.id : hitTxt ? hitTxt.id : `pt-${Date.now()}`;
         handleStartConnectorDrag(fromId, 'right', canvasPos.x, canvasPos.y);
         return;
       }
 
-      // 1. Hit test against Shapes and Sticky Notes (top-most shape first)
-      const hitShape = [...shapesRef.current].reverse().find((shp) => {
-        const minX = Math.min(shp.x, shp.x + shp.width);
-        const maxX = Math.max(shp.x, shp.x + shp.width);
-        const minY = Math.min(shp.y, shp.y + shp.height);
-        const maxY = Math.max(shp.y, shp.y + shp.height);
-        const pad = shp.type === 'line' || shp.type === 'arrow' ? 20 : 6;
-        return (
-          canvasPos.x >= minX - pad &&
-          canvasPos.x <= maxX + pad &&
-          canvasPos.y >= minY - pad &&
-          canvasPos.y <= maxY + pad
-        );
-      });
-
-      if (hitShape) {
-        setSelectedItem({ type: 'shape', item: hitShape });
-        setActiveTextId(null);
-        directDragItemRef.current = {
-          type: 'shape',
-          id: hitShape.id,
-          startClientX: screenX,
-          startClientY: screenY,
-          startItemX: hitShape.x,
-          startItemY: hitShape.y,
-        };
-        isDirectDraggingItemRef.current = true;
-        hasDraggedRef.current = false;
-        pointerDownPosRef.current = { x: screenX, y: screenY };
-        return;
-      }
-
-      // 2. Hit test against Images
-      const hitImage = [...imagesRef.current].reverse().find(
-        (img) =>
-          canvasPos.x >= img.x &&
-          canvasPos.x <= img.x + img.width &&
-          canvasPos.y >= img.y &&
-          canvasPos.y <= img.y + img.height
-      );
-
+      // 2d. Hit test against Images: Single touch selects & enables direct drag-to-move!
+      const hitImage = hitTestImage(canvasPos);
       if (hitImage) {
         setSelectedItem({ type: 'image', item: hitImage });
         setActiveTextId(null);
@@ -2587,28 +2768,69 @@ export const InfiniteStylusCanvas: React.FC = () => {
         return;
       }
 
-      // 3. Selection tool on empty canvas: deselect active item and inspect sentence
-      if (currentTool === 'select') {
-        if (selectedItem) {
-          setSelectedItem(null);
-        }
-        handleSentenceSelectAtCanvasPoint(canvasPos);
+      // 2e. Hit test against Shapes and Sticky Notes: Single touch selects & enables direct drag-to-move!
+      const hitShape = hitTestShape(canvasPos);
+      if (hitShape) {
+        setSelectedItem({ type: 'shape', item: hitShape });
+        setActiveTextId(null);
+        directDragItemRef.current = {
+          type: 'shape',
+          id: hitShape.id,
+          startClientX: screenX,
+          startClientY: screenY,
+          startItemX: hitShape.x,
+          startItemY: hitShape.y,
+        };
+        isDirectDraggingItemRef.current = true;
+        hasDraggedRef.current = false;
+        pointerDownPosRef.current = { x: screenX, y: screenY };
         return;
       }
 
-      // 4. Blank canvas click in Move & Type mode: start canvas pan
+      // 2f. Hit test against Canvas Text Items:
+      // Single touch selects & enables direct drag-to-move (just like images and shapes).
+      // Never shows any 'copy' tooltip (copy is in item settings on hold / toolbar).
+      const hitText = hitTestText(canvasPos);
+      if (hitText) {
+        setSelectedSentences([]);
+        setSelectedItem({ type: 'text', item: hitText });
+        setActiveTextId(null);
+        directDragItemRef.current = {
+          type: 'text',
+          id: hitText.id,
+          startClientX: screenX,
+          startClientY: screenY,
+          startItemX: hitText.x,
+          startItemY: hitText.y,
+        };
+        isDirectDraggingItemRef.current = true;
+        hasDraggedRef.current = false;
+        pointerDownPosRef.current = { x: screenX, y: screenY };
+        return;
+      }
+
+      // 2g. Hit test against AI thought sentences: highlight to copy
+      const sentenceHit = handleSentenceSelectAtCanvasPoint(canvasPos);
+      if (sentenceHit) {
+        isTextHighlightDragRef.current = true;
+        pointerDownPosRef.current = { x: screenX, y: screenY };
+        hasDraggedRef.current = false;
+        return;
+      }
+
+      // 2h. Empty Canvas Space in Hand mode or any non-drawing mode:
+      // Deselect and smoothly pan canvas without needing to switch tools
+      if (selectedItem) {
+        setSelectedItem(null);
+      }
+      if (selectedSentences.length > 0) {
+        setSelectedSentences([]);
+      }
       isPanningRef.current = true;
+      setIsPanningState(true);
       lastPanPointRef.current = { x: screenX, y: screenY };
       pointerDownPosRef.current = { x: screenX, y: screenY };
       hasDraggedRef.current = false;
-      return;
-    }
-
-    if (isDoubleTap) {
-      const sentenceHit = handleSentenceSelectAtCanvasPoint(canvasPos);
-      if (!sentenceHit) {
-        handleCanvasTapToType(screenX, screenY);
-      }
       return;
     }
 
@@ -2702,7 +2924,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
     const screenX = e.clientX;
     const screenY = e.clientY;
 
-    // Direct shape or image dragging on canvas
+    // Direct shape, image, or text dragging on canvas
     if (isDirectDraggingItemRef.current && directDragItemRef.current) {
       const info = directDragItemRef.current;
       if (Math.hypot(screenX - pointerDownPosRef.current.x, screenY - pointerDownPosRef.current.y) > 3) {
@@ -2733,6 +2955,26 @@ export const InfiniteStylusCanvas: React.FC = () => {
         if (currentHit) {
           setSelectedItem({ type: 'image', item: currentHit });
         }
+      } else if (info.type === 'text') {
+        const updated = canvasTextsRef.current.map((txt) =>
+          txt.id === info.id ? { ...txt, x: newX, y: newY } : txt
+        );
+        canvasTextsRef.current = updated;
+        setCanvasTexts(updated);
+        const currentHit = updated.find((t) => t.id === info.id);
+        if (currentHit && activeTextId !== info.id) {
+          setSelectedItem({ type: 'text', item: currentHit });
+        }
+      }
+      return;
+    }
+
+    // Touch and drag across text to highlight/select lines for copying
+    if (isTextHighlightDragRef.current) {
+      if (Math.hypot(screenX - pointerDownPosRef.current.x, screenY - pointerDownPosRef.current.y) > 8) {
+        hasDraggedRef.current = true;
+        const canvasPos = screenToCanvas(screenX, screenY);
+        handleSentenceSelectAtCanvasPoint(canvasPos);
       }
       return;
     }
@@ -2825,14 +3067,14 @@ export const InfiniteStylusCanvas: React.FC = () => {
       return;
     }
 
+    if (isTextHighlightDragRef.current) {
+      isTextHighlightDragRef.current = false;
+      return;
+    }
+
     setIsPanningState(false);
     if (isPanningRef.current) {
       isPanningRef.current = false;
-      const isMiddleOrRight = e.button === 1 || e.button === 2;
-      const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
-      if (!hasDraggedRef.current && !isPenTool && !isMiddleOrRight && !isSpaceHeldRef.current && currentTool !== 'pan') {
-        handleCanvasTapToType(e.clientX, e.clientY);
-      }
       return;
     }
 
@@ -2917,33 +3159,48 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Wheel Zoom / Pan (Continuous smooth exponential zoom centered at mouse cursor)
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const isZoom = e.ctrlKey || e.metaKey || e.altKey;
-    if (isZoom) {
-      const zoomIntensity = 0.0025;
-      const zoomFactor = Math.exp(-e.deltaY * zoomIntensity);
-      const mouseX = e.clientX;
-      const mouseY = e.clientY;
 
-      setViewport((prev) => {
-        const newZoom = Math.min(5.0, Math.max(0.15, prev.zoom * zoomFactor));
-        const updated = {
-          zoom: newZoom,
-          x: mouseX - (mouseX - prev.x) * (newZoom / prev.zoom),
-          y: mouseY - (mouseY - prev.y) * (newZoom / prev.zoom),
-        };
-        viewportRef.current = updated;
-        return updated;
-      });
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+
+    // Zoom conditions:
+    // Any external mouse wheel roll (deltaY != 0), trackpad pinch (ctrlKey/metaKey), or Alt key
+    const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
+    // On desktop, rotating mouse wheel (or pinch zoom) should zoom centered at cursor
+    const isScrollWheelZoom = !e.shiftKey && (hasModifier || e.deltaMode !== 0 || Math.abs(e.deltaY) >= Math.abs(e.deltaX));
+
+    if (isScrollWheelZoom && Math.abs(e.deltaY) > 0) {
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) delta *= 20; // Standard mouse line mode
+      else if (e.deltaMode === 2) delta *= 80; // Page mode
+
+      // Normalize delta across high-precision mice and standard wheels
+      const clampedDelta = Math.max(-100, Math.min(100, delta));
+      const zoomIntensity = e.ctrlKey ? 0.0035 : 0.0018;
+      const zoomFactor = Math.exp(-clampedDelta * zoomIntensity);
+
+      const prev = viewportRef.current;
+      const newZoom = Math.min(6.0, Math.max(0.12, prev.zoom * zoomFactor));
+      const updated = {
+        zoom: newZoom,
+        x: mouseX - (mouseX - prev.x) * (newZoom / prev.zoom),
+        y: mouseY - (mouseY - prev.y) * (newZoom / prev.zoom),
+      };
+      viewportRef.current = updated;
+      setViewport(updated);
     } else {
-      setViewport((prev) => {
-        const updated = {
-          ...prev,
-          x: prev.x - e.deltaX,
-          y: prev.y - e.deltaY,
-        };
-        viewportRef.current = updated;
-        return updated;
-      });
+      // Trackpad 2-finger pan or Shift+Wheel horizontal pan
+      const panX = e.shiftKey ? e.deltaY : e.deltaX;
+      const panY = e.shiftKey ? 0 : e.deltaY;
+
+      const prev = viewportRef.current;
+      const updated = {
+        ...prev,
+        x: prev.x - panX,
+        y: prev.y - panY,
+      };
+      viewportRef.current = updated;
+      setViewport(updated);
     }
   };
 
@@ -3243,7 +3500,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         style={{ touchAction: 'none' }}
       />
 
-      {/* Active typing block on canvas with single native vertical blinking cursor */}
+      {/* Active typing block on canvas with single native vertical blinking cursor and move handle */}
       {activeTextItem && (
         <div
           id="canvas-active-text-wrapper"
@@ -3251,10 +3508,25 @@ export const InfiniteStylusCanvas: React.FC = () => {
             position: 'absolute',
             left: viewport.x + activeTextItem.x * viewport.zoom,
             top: viewport.y + activeTextItem.y * viewport.zoom,
-            zIndex: 25,
+            zIndex: 45,
             pointerEvents: 'auto',
           }}
         >
+          {/* Grab handle allowing user to smoothly move the text block around while typing */}
+          <div
+            onPointerDown={handleActiveTextMoveStart}
+            className={`flex items-center gap-1.5 px-2.5 py-1 mb-1.5 rounded-md text-[11px] font-medium select-none shadow-sm w-fit pointer-events-auto transition-all ${
+              isDraggingActiveText
+                ? 'bg-neutral-950 text-white ring-2 ring-neutral-900/40 cursor-grabbing scale-102 shadow-md'
+                : 'bg-neutral-900/90 hover:bg-neutral-950 text-white cursor-grab hover:scale-102'
+            }`}
+            style={{ touchAction: 'none' }}
+            title="Drag to adjust position while typing"
+          >
+            <GripHorizontal className="w-3.5 h-3.5 text-neutral-300" />
+            <span>Move</span>
+          </div>
+
           <div className="relative inline-block">
             <textarea
               ref={activeInputRef}
@@ -3266,19 +3538,24 @@ export const InfiniteStylusCanvas: React.FC = () => {
                   handleBlurActiveText();
                 }
               }}
-              rows={Math.max(1, activeTextItem.text.split('\n').length)}
               placeholder=""
               autoFocus
-              className="resize-none overflow-hidden bg-transparent border-none outline-none p-0 m-0 whitespace-pre-wrap select-text cursor-text"
+              className="resize-none overflow-visible bg-transparent border-none outline-none p-0 m-0 whitespace-pre-wrap select-text cursor-text"
               style={{
                 fontFamily: '"Kalam", "Caveat", cursive',
+                fontWeight: 500,
                 fontSize: `${22 * viewport.zoom}px`,
                 lineHeight: `${32 * viewport.zoom}px`,
                 color: activeTextItem.color || currentColor || '#1E1E1E',
                 caretColor: '#1E1E1E',
-                width: `${Math.max(220, Math.min(1100, (Math.max(...activeTextItem.text.split('\n').map((l) => l.length), 8) + 4) * 14)) * viewport.zoom}px`,
-                minWidth: `${180 * viewport.zoom}px`,
-                maxWidth: 'min(1200px, 92vw)',
+                width: `${(activeTextItem.width || 640) * viewport.zoom}px`,
+                maxWidth: 'calc(94vw - 24px)',
+                minHeight: `${34 * viewport.zoom}px`,
+                padding: 0,
+                margin: 0,
+                border: 'none',
+                outline: 'none',
+                boxSizing: 'border-box',
               }}
             />
           </div>
@@ -3296,11 +3573,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
       {/* Interactive Transform, Move & Resize Overlay for Selected Canvas Item (Images, Shapes, Sticky Notes, Texts) */}
       <CanvasItemTransformOverlay
-        selected={selectedItem}
+        selected={activeTextId ? null : selectedItem}
         viewport={viewport}
         onUpdateImage={handleUpdateImage}
         onUpdateShape={handleUpdateShape}
         onUpdateText={handleUpdateText}
+        onEditText={handleEditText}
         onCommitTransform={handleCommitTransform}
         onDeleteItem={handleDeleteItem}
         onDuplicateItem={handleDuplicateItem}
