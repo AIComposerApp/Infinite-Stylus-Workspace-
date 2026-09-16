@@ -35,6 +35,7 @@ import {
   ListTodo,
   Type,
   Workflow,
+  Globe2,
 } from 'lucide-react';
 import { StylusToolType, ShapeType } from '@/types/canvas';
 
@@ -56,6 +57,7 @@ interface LiquidBottomDockProps {
   onExportPDF: () => void;
   onExportPNG: () => void;
   onExportJSON?: () => void;
+  onShareThoughtDump?: () => void;
   onTriggerAssistant: () => void;
   isAssistantThinking: boolean;
   isConversationalActive?: boolean;
@@ -96,6 +98,7 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   onExportPDF,
   onExportPNG,
   onExportJSON,
+  onShareThoughtDump,
   onTriggerAssistant,
   isAssistantThinking,
   isConversationalActive = false,
@@ -108,6 +111,7 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
   const [showShapesMenu, setShowShapesMenu] = useState<boolean>(false);
   const [justSaved, setJustSaved] = useState<boolean>(false);
+  const [isDockOpen, setIsDockOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Framer Motion controls for repositioning whole dock via grip only
@@ -842,124 +846,158 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
           className="hidden"
         />
 
-        {/* Unified Liquid Dock Container */}
+        {/* Floating Dock Navigation Container with Space-Claiming Physics */}
         <div
-          id="liquid-dock"
-          className="flex items-center gap-0.5 sm:gap-1 p-1 sm:p-1.5 rounded-full backdrop-blur-2xl border border-black/[0.08] shadow-[0_12px_36px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.03)] bg-white/95 transition-all duration-300 overflow-visible"
+          id="liquid-dock-container"
+          className={`relative flex items-center justify-between gap-1.5 w-[96vw] max-w-[740px] ${
+            isDockOpen ? 'is-open' : ''
+          }`}
         >
-          {/* Subtle Dock Reposition Grip Handle */}
+          {/* 1. Adjacent Icon / Logo: .nav_logo_wrap */}
           <div
-            onPointerDown={(e) => dockDragControls.start(e)}
-            className="flex items-center justify-center w-4 sm:w-5 h-9 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing px-0.5 touch-none shrink-0"
-            title="Drag grip to reposition dock on screen"
-          >
-            <GripHorizontal className="w-3.5 h-3.5" />
-          </div>
-
-          {/* LEFT INFINITE LOOPING RIBBON (Creation, workspace, library, shapes, checklist, quick undo/redo) */}
-          <div
-            id="liquid-left-tools-viewport"
-            onPointerDown={handleLeftRibbonPointerDown}
-            onPointerMove={handleLeftRibbonPointerMove}
-            onPointerUp={handleLeftRibbonPointerUp}
-            onPointerCancel={handleLeftRibbonPointerUp}
-            onWheel={handleLeftRibbonWheel}
-            className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[240px] lg:w-[275px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
-              leftIsHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
-            }`}
-            title="Hold and slide finger left or right to reveal creation tools"
-          >
-            {/* Left Edge Subtle Fade */}
-            <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
-
-            {/* Right Edge Subtle Fade */}
-            <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
-
-            {/* Infinite Looping Track (3 identical sets side by side) */}
-            <div
-              className="flex items-center will-change-transform"
-              style={{
-                transform: `translate3d(${leftTranslateX}px, 0, 0)`,
-                width: `${leftOneLoopWidth * 3}px`,
-              }}
-            >
-              {/* Copy 0 */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l0'))}
-              </div>
-
-              {/* Copy 1 (Middle Initial Copy) */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l1'))}
-              </div>
-
-              {/* Copy 2 */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l2'))}
-              </div>
-            </div>
-          </div>
-
-          {/* EXACT DOCK CENTERPIECE: As-is, no round container, clean drop-shadow & scale */}
-          <button
-            id="btn-dock-main-center"
-            onClick={() => {
+            id="nav-logo-wrap"
+            onClick={(e) => {
+              e.stopPropagation();
               window.dispatchEvent(new CustomEvent('recenter-canvas'));
             }}
-            className="relative shrink-0 flex items-center justify-center p-0 m-0 cursor-pointer select-none group active:scale-90 transition-transform outline-none z-30"
-            title="Infinite Stylus Canvas — Tap to recenter view"
+            style={{
+              transform: isDockOpen ? 'scale(0)' : 'scale(1)',
+              opacity: isDockOpen ? 0 : 1,
+              pointerEvents: isDockOpen ? 'none' : 'auto',
+              transition:
+                'transform 0.6s cubic-bezier(0.65, 0, 0, 1) 0.05s, opacity 0.4s ease',
+            }}
+            className="nav_logo_wrap flex items-center justify-center w-[3.75rem] h-[52px] rounded-full bg-white/95 border border-black/[0.08] shadow-[0_8px_24px_rgba(0,0,0,0.08)] cursor-pointer hover:bg-neutral-50 shrink-0 group active:scale-90 z-30"
+            title="Recenter Infinite Canvas"
           >
             <Image
               src="/icons/dock-main-dark-128.png"
               alt="Main Workspace Emblem"
-              width={46}
-              height={46}
+              width={36}
+              height={36}
               referrerPolicy="no-referrer"
-              className="w-10 h-10 sm:w-11 sm:h-11 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 active:scale-95 drop-shadow-[0_4px_12px_rgba(0,0,0,0.12)]"
+              className="w-9 h-9 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 drop-shadow-[0_2px_8px_rgba(0,0,0,0.1)]"
               priority
             />
-          </button>
+          </div>
 
-          {/* RIGHT INFINITE LOOPING RIBBON (Drawing tools, colors, undo/redo, export, assistant) */}
+          {/* 2. Inner Interaction Pill: .nav_bar_inner (Space-Claim Tradeoff) */}
           <div
-            id="liquid-tools-viewport"
-            onPointerDown={handleRibbonPointerDown}
-            onPointerMove={handleRibbonPointerMove}
-            onPointerUp={handleRibbonPointerUp}
-            onPointerCancel={handleRibbonPointerUp}
-            onWheel={handleRibbonWheel}
-            className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[240px] lg:w-[275px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
-              isHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
-            }`}
-            title="Hold and slide finger left or right to reveal all drawing tools"
+            id="liquid-dock"
+            style={{
+              width: isDockOpen ? '100%' : 'calc(100% - 4.25rem)',
+              backgroundColor: isDockOpen ? '#141414' : 'rgba(255, 255, 255, 0.95)',
+              color: isDockOpen ? '#FFFFFF' : '#171717',
+              transition:
+                'width 0.6s cubic-bezier(0.65, 0, 0, 1), background-color 0.4s ease, color 0.4s ease',
+            }}
+            className="nav_bar_inner flex items-center justify-between gap-0.5 sm:gap-1 p-1 sm:p-1.5 rounded-full backdrop-blur-2xl border border-black/[0.08] shadow-[0_12px_36px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.03)] overflow-visible"
           >
-            {/* Left Edge Subtle Fade */}
-            <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
-
-            {/* Right Edge Subtle Fade */}
-            <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
-
-            {/* Infinite Looping Track (3 identical sets side by side) */}
+            {/* Subtle Dock Reposition Grip Handle */}
             <div
-              className="flex items-center will-change-transform"
-              style={{
-                transform: `translate3d(${translateX}px, 0, 0)`,
-                width: `${oneLoopWidth * 3}px`,
-              }}
+              onPointerDown={(e) => dockDragControls.start(e)}
+              className="flex items-center justify-center w-4 sm:w-5 h-9 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing px-0.5 touch-none shrink-0"
+              title="Drag grip to reposition dock on screen"
             >
-              {/* Copy 0 */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                {toolDefinitions.map((item) => renderToolButton(item, 'c0'))}
-              </div>
+              <GripHorizontal className="w-3.5 h-3.5" />
+            </div>
 
-              {/* Copy 1 (Middle Initial Copy) */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                {toolDefinitions.map((item) => renderToolButton(item, 'c1'))}
-              </div>
+            {/* LEFT INFINITE LOOPING RIBBON (Creation, workspace, library, shapes, checklist, quick undo/redo) */}
+            <div
+              id="liquid-left-tools-viewport"
+              onPointerDown={handleLeftRibbonPointerDown}
+              onPointerMove={handleLeftRibbonPointerMove}
+              onPointerUp={handleLeftRibbonPointerUp}
+              onPointerCancel={handleLeftRibbonPointerUp}
+              onWheel={handleLeftRibbonWheel}
+              className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[230px] lg:w-[260px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
+                leftIsHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
+              }`}
+              title="Hold and slide finger left or right to reveal creation tools"
+            >
+              {/* Left Edge Subtle Fade */}
+              <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
 
-              {/* Copy 2 */}
-              <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                {toolDefinitions.map((item) => renderToolButton(item, 'c2'))}
+              {/* Right Edge Subtle Fade */}
+              <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
+
+              {/* Infinite Looping Track */}
+              <div
+                className="flex items-center will-change-transform"
+                style={{
+                  transform: `translate3d(${leftTranslateX}px, 0, 0)`,
+                  width: `${leftOneLoopWidth * 3}px`,
+                }}
+              >
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
+                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l0'))}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
+                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l1'))}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
+                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l2'))}
+                </div>
+              </div>
+            </div>
+
+            {/* DOCK EXPAND / RECENTER TRIGGER BUTTON (Complete Event Isolation) */}
+            <button
+              id="btn-dock-main-center"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDockOpen(!isDockOpen);
+              }}
+              className="relative shrink-0 flex items-center justify-center p-1 cursor-pointer select-none group active:scale-90 transition-transform outline-none z-30 rounded-full hover:bg-neutral-100/30"
+              title={isDockOpen ? 'Collapse dock' : 'Expand full dock space'}
+            >
+              <Image
+                src="/icons/dock-main-dark-128.png"
+                alt="Main Workspace Emblem"
+                width={36}
+                height={36}
+                referrerPolicy="no-referrer"
+                className="w-8 h-8 sm:w-9 sm:h-9 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 drop-shadow-[0_2px_8px_rgba(0,0,0,0.12)]"
+                priority
+              />
+            </button>
+
+            {/* RIGHT INFINITE LOOPING RIBBON (Drawing tools, colors, undo/redo, export, assistant) */}
+            <div
+              id="liquid-tools-viewport"
+              onPointerDown={handleRibbonPointerDown}
+              onPointerMove={handleRibbonPointerMove}
+              onPointerUp={handleRibbonPointerUp}
+              onPointerCancel={handleRibbonPointerUp}
+              onWheel={handleRibbonWheel}
+              className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[230px] lg:w-[260px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
+                isHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
+              }`}
+              title="Hold and slide finger left or right to reveal all drawing tools"
+            >
+              {/* Left Edge Subtle Fade */}
+              <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
+
+              {/* Right Edge Subtle Fade */}
+              <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
+
+              {/* Infinite Looping Track */}
+              <div
+                className="flex items-center will-change-transform"
+                style={{
+                  transform: `translate3d(${translateX}px, 0, 0)`,
+                  width: `${oneLoopWidth * 3}px`,
+                }}
+              >
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
+                  {toolDefinitions.map((item) => renderToolButton(item, 'c0'))}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
+                  {toolDefinitions.map((item) => renderToolButton(item, 'c1'))}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
+                  {toolDefinitions.map((item) => renderToolButton(item, 'c2'))}
+                </div>
               </div>
             </div>
           </div>
@@ -1230,6 +1268,22 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
             style={{ transformOrigin: 'bottom center' }}
             className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-2 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-1 w-[calc(100vw-32px)] max-w-[240px] z-50 pointer-events-auto select-none"
           >
+            {onShareThoughtDump && (
+              <button
+                onClick={() => {
+                  onShareThoughtDump();
+                  setShowExportMenu(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-900 bg-neutral-100/90 hover:bg-neutral-900 hover:text-white rounded-xl transition-all font-semibold text-left cursor-pointer group"
+              >
+                <Globe2 className="w-4 h-4 text-neutral-800 group-hover:text-white transition-colors" strokeWidth={1.8} />
+                <div className="flex flex-col">
+                  <span>Share Anonymous Thought</span>
+                  <span className="text-[10px] font-normal text-neutral-500 group-hover:text-neutral-300">Broadcast to Thoughtspace feed</span>
+                </div>
+              </button>
+            )}
+            <div className="h-px bg-neutral-100 my-0.5" />
             <button
               onClick={() => {
                 onExportPNG();

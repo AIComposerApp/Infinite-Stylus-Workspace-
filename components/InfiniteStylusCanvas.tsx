@@ -52,7 +52,12 @@ import { CanvasMiniRadar } from '@/components/CanvasMiniRadar';
 import { CanvasTimeMachine } from '@/components/CanvasTimeMachine';
 import { CanvasOnboardingGuide } from '@/components/CanvasOnboardingGuide';
 import { CanvasConnectorActionOverlay } from '@/components/CanvasConnectorActionOverlay';
-import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2, HelpCircle, Workflow, Type, Copy, Compass, GripHorizontal } from 'lucide-react';
+import { FeedbackRatingModal } from '@/components/FeedbackRatingModal';
+import { ShareThoughtDumpModal } from '@/components/ShareThoughtDumpModal';
+import { LiveThoughtFeedModal } from '@/components/LiveThoughtFeedModal';
+import { AppNavigationDrawer } from '@/components/AppNavigationDrawer';
+import { publishThoughtDumpToFirestore, SharedThoughtDocument } from '@/lib/thoughtspace-service';
+import { PenTool, ShieldCheck, Hand, Edit3, Check, History, Maximize2, HelpCircle, Workflow, Type, Copy, Compass, GripHorizontal, Globe2, Star, Radio, Menu, Undo2, Redo2 } from 'lucide-react';
 
 // Living Ink: Detect natural scratch-out / scribble gesture
 const isScratchOutGesture = (points: Point[]): boolean => {
@@ -96,6 +101,35 @@ const subscribeOnline = (callback: () => void) => {
 const getOnlineSnapshot = () => (typeof navigator !== 'undefined' ? navigator.onLine : true);
 const getServerSnapshot = () => true;
 
+let cachedPendingThoughtDump: {
+  strokes?: Stroke[];
+  thoughts?: AIThought[];
+  canvasTexts?: CanvasTextItem[];
+  shapes?: CanvasShapeItem[];
+  checklists?: CanvasChecklistItem[];
+  title?: string;
+} | null = null;
+let hasCheckedPendingThoughtDump = false;
+
+function getPendingThoughtDump() {
+  if (typeof window === 'undefined') return null;
+  if (!hasCheckedPendingThoughtDump) {
+    hasCheckedPendingThoughtDump = true;
+    try {
+      const payload = localStorage.getItem('thoughtspace_pending_load');
+      const title = localStorage.getItem('thoughtspace_pending_title');
+      if (payload) {
+        localStorage.removeItem('thoughtspace_pending_load');
+        localStorage.removeItem('thoughtspace_pending_title');
+        cachedPendingThoughtDump = { ...JSON.parse(payload), title: title || 'Thought Stream' };
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return cachedPendingThoughtDump;
+}
+
 export const InfiniteStylusCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -132,6 +166,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
   // Current Canvas State
   const [strokes, setStrokes] = useState<Stroke[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending?.strokes && pending.strokes.length > 0) {
+      return pending.strokes;
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -139,6 +177,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   });
 
   const [thoughts, setThoughts] = useState<AIThought[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending?.thoughts && pending.thoughts.length > 0) {
+      return pending.thoughts;
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -146,6 +188,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   });
 
   const [canvasTexts, setCanvasTexts] = useState<CanvasTextItem[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending?.canvasTexts && pending.canvasTexts.length > 0) {
+      return pending.canvasTexts;
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -160,6 +206,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   });
 
   const [shapes, setShapes] = useState<CanvasShapeItem[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending?.shapes && pending.shapes.length > 0) {
+      return pending.shapes;
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -167,6 +217,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
   });
 
   const [checklists, setChecklists] = useState<CanvasChecklistItem[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending?.checklists && pending.checklists.length > 0) {
+      return pending.checklists;
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -280,6 +334,20 @@ export const InfiniteStylusCanvas: React.FC = () => {
     checklists: CanvasChecklistItem[];
     connectors: CanvasConnectorItem[];
   }[]>(() => {
+    const pending = getPendingThoughtDump();
+    if (pending) {
+      return [
+        {
+          strokes: pending.strokes || [],
+          thoughts: pending.thoughts || [],
+          canvasTexts: pending.canvasTexts || [],
+          images: [],
+          shapes: pending.shapes || [],
+          checklists: pending.checklists || [],
+          connectors: [],
+        },
+      ];
+    }
     const list = loadSavedProjects();
     const savedId = loadActiveProjectId();
     const proj = list.find((p) => p.id === savedId) || list[0];
@@ -357,6 +425,29 @@ export const InfiniteStylusCanvas: React.FC = () => {
   // Top header project title inline editing
   const [isEditingTopTitle, setIsEditingTopTitle] = useState<boolean>(false);
   const [topTitleInput, setTopTitleInput] = useState<string>('');
+
+  // Phase 1: Anonymous Thought Dump Sharing & Feedback/Rating System
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
+  const [feedbackTriggerReason, setFeedbackTriggerReason] = useState<'manual' | 'post_share' | 'high_engagement'>('manual');
+  // Phase 2: Multi-Page Navigation & Live Feed Integration
+  const [isNavDrawerOpen, setIsNavDrawerOpen] = useState<boolean>(false);
+  const [isLiveFeedOpen, setIsLiveFeedOpen] = useState<boolean>(false);
+  const [lastCanvasTapTime, setLastCanvasTapTime] = useState<number>(0);
+  const isInteractingWithMoveHandleRef = useRef<boolean>(false);
+  const sessionStartTimeRef = useRef<number>(0);
+  const [sessionDurationSec, setSessionDurationSec] = useState<number>(0);
+  const highEngagementTriggeredRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    sessionStartTimeRef.current = Date.now();
+    const interval = setInterval(() => {
+      if (sessionStartTimeRef.current > 0) {
+        setSessionDurationSec(Math.round((Date.now() - sessionStartTimeRef.current) / 1000));
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Screen dimensions for off-screen bubble calculation
   const [windowDimensions, setWindowDimensions] = useState<{ width: number; height: number }>({
@@ -2121,26 +2212,33 @@ export const InfiniteStylusCanvas: React.FC = () => {
   );
 
   // Blur/finish typing
-  const handleBlurActiveText = useCallback(() => {
-    if (isDraggingActiveTextRef.current) return;
-    setCanvasTexts((prev) => {
-      const activeItem = prev.find((t) => t.id === activeTextId);
-      let updated = prev;
-      if (activeItem && !activeItem.text.trim()) {
-        updated = prev.filter((t) => t.id !== activeTextId);
+  const handleBlurActiveText = useCallback(
+    (e?: React.FocusEvent) => {
+      if (isDraggingActiveTextRef.current || isInteractingWithMoveHandleRef.current) return;
+      if (e?.relatedTarget && (e.relatedTarget as HTMLElement).closest?.('#canvas-active-text-wrapper')) {
+        return;
       }
-      canvasTextsRef.current = updated;
-      pushHistory(strokesRef.current, thoughtsRef.current, updated);
-      return updated;
-    });
-    setActiveTextId(null);
-  }, [activeTextId, pushHistory]);
+      setCanvasTexts((prev) => {
+        const activeItem = prev.find((t) => t.id === activeTextId);
+        let updated = prev;
+        if (activeItem && !activeItem.text.trim()) {
+          updated = prev.filter((t) => t.id !== activeTextId);
+        }
+        canvasTextsRef.current = updated;
+        pushHistory(strokesRef.current, thoughtsRef.current, updated);
+        return updated;
+      });
+      setActiveTextId(null);
+    },
+    [activeTextId, pushHistory]
+  );
 
   // Start dragging active text from the Move handle
   const handleActiveTextMoveStart = useCallback(
     (e: React.PointerEvent) => {
       e.stopPropagation();
       e.preventDefault();
+      isInteractingWithMoveHandleRef.current = true;
       const currentActiveText = canvasTextsRef.current.find((t) => t.id === activeTextId);
       if (!currentActiveText) return;
 
@@ -2198,11 +2296,14 @@ export const InfiniteStylusCanvas: React.FC = () => {
         activeTextDragRef.current = null;
         isDraggingActiveTextRef.current = false;
         setIsDraggingActiveText(false);
+        setTimeout(() => {
+          isInteractingWithMoveHandleRef.current = false;
+        }, 140);
 
         // Keep textarea focused so user can smoothly resume typing
         setTimeout(() => {
           activeInputRef.current?.focus();
-        }, 20);
+        }, 30);
       }
     };
 
@@ -2648,11 +2749,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
 
     const now = Date.now();
     const isDoubleTap =
-      now - lastTapTimeRef.current < 380 &&
-      Math.hypot(screenX - lastTapPosRef.current.x, screenY - lastTapPosRef.current.y) < 25;
+      now - lastTapTimeRef.current < 450 &&
+      Math.hypot(screenX - lastTapPosRef.current.x, screenY - lastTapPosRef.current.y) < 35;
 
     lastTapTimeRef.current = now;
     lastTapPosRef.current = { x: screenX, y: screenY };
+    setLastCanvasTapTime(now);
 
     const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
 
@@ -3204,6 +3306,24 @@ export const InfiniteStylusCanvas: React.FC = () => {
     }
   };
 
+  // Double click on canvas to immediately activate text typing mode
+  const handleCanvasDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const canvasPos = screenToCanvas(e.clientX, e.clientY);
+      const hitTxt = hitTestText(canvasPos);
+      if (hitTxt) {
+        setSelectedSentences([]);
+        setSelectedItem(null);
+        setActiveTextId(hitTxt.id);
+        setTimeout(() => {
+          activeInputRef.current?.focus();
+          autoResizeActiveTextarea();
+        }, 40);
+      }
+    },
+    [autoResizeActiveTextarea, hitTestText, screenToCanvas]
+  );
+
   // Keyboard Shortcuts (Undo, Redo, Save, Pan, Tool switching, Duplicate, Delete, Copy)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -3317,6 +3437,159 @@ export const InfiniteStylusCanvas: React.FC = () => {
     showToast,
   ]);
 
+  // Automatic high-engagement feedback trigger (e.g. user drawn 25+ strokes and active for over 90 seconds)
+  useEffect(() => {
+    if (highEngagementTriggeredRef.current) return;
+    if (strokes.length >= 25) {
+      if (typeof window !== 'undefined') {
+        const hasSubmitted = localStorage.getItem('thoughtspace_feedback_submitted');
+        const hasOptedOut = localStorage.getItem('thoughtspace_feedback_opt_out');
+        const sessionElapsed = (Date.now() - sessionStartTimeRef.current) / 1000;
+        if (!hasSubmitted && !hasOptedOut && sessionElapsed > 75) {
+          highEngagementTriggeredRef.current = true;
+          const timer = setTimeout(() => {
+            setFeedbackTriggerReason('high_engagement');
+            setIsFeedbackModalOpen(true);
+          }, 2500);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+  }, [strokes.length]);
+
+  // Handle sharing thought dump to anonymous live feed with Cloud Firestore persistence
+  const handleConfirmShareThoughtDump = useCallback(
+    async (payload: { duration: string; summary: string; scanStatus: 'clean' | 'sanitized' }) => {
+      const canvasPayloadString = JSON.stringify({
+        strokes: strokesRef.current.slice(0, 1500),
+        canvasTexts: canvasTextsRef.current.slice(0, 200),
+        thoughts: thoughtsRef.current.slice(0, 50),
+        shapes: shapesRef.current.slice(0, 100),
+        checklists: checklistsRef.current.slice(0, 20),
+      });
+      const title = activeProject?.title || 'Untitled Thought Dump';
+
+      try {
+        const publishedId = await publishThoughtDumpToFirestore({
+          title,
+          summary: payload.summary || 'Anonymous thoughts dumped onto infinite canvas',
+          duration: payload.duration,
+          strokesCount: strokesRef.current.length,
+          canvasPayload: canvasPayloadString,
+        });
+
+        if (typeof window !== 'undefined') {
+          const existing = JSON.parse(localStorage.getItem('thoughtspace_shared_dumps') || '[]');
+          const newEntry = {
+            id: publishedId,
+            title,
+            summary: payload.summary,
+            duration: payload.duration,
+            scanStatus: payload.scanStatus,
+            createdAt: new Date().toISOString(),
+            strokesCount: strokesRef.current.length,
+            textsCount: canvasTextsRef.current.length,
+          };
+          existing.unshift(newEntry);
+          localStorage.setItem('thoughtspace_shared_dumps', JSON.stringify(existing.slice(0, 50)));
+          localStorage.setItem('thoughtspace_has_shared_first_thought', 'true');
+        }
+
+        showToast(`Thought Dump live on feed for ${payload.duration} • Shared anonymously`);
+      } catch (err) {
+        console.error('Error publishing thought dump to Firestore:', err);
+        showToast(`Thought Dump published locally (offline mode)`);
+      }
+
+      // Post-share feedback trigger: if user hasn't rated yet, prompt gently
+      if (typeof window !== 'undefined') {
+        const hasSubmitted = localStorage.getItem('thoughtspace_feedback_submitted');
+        const hasOptedOut = localStorage.getItem('thoughtspace_feedback_opt_out');
+        if (!hasSubmitted && !hasOptedOut) {
+          setTimeout(() => {
+            setFeedbackTriggerReason('post_share');
+            setIsFeedbackModalOpen(true);
+          }, 1200);
+        }
+      }
+    },
+    [activeProject?.title, showToast]
+  );
+
+  // Load a stranger's shared thought dump directly onto the canvas for exploration
+  const handleLoadThoughtToCanvas = useCallback(
+    (thought: SharedThoughtDocument) => {
+      if (!thought.canvasPayload) {
+        showToast('This thought dump has no canvas items to render.');
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(thought.canvasPayload);
+        const {
+          strokes: newStrokes,
+          canvasTexts: newTexts,
+          thoughts: newThoughts,
+          shapes: newShapes,
+          checklists: newChecklists,
+        } = parsed;
+
+        if (newStrokes && newStrokes.length > 0) {
+          setStrokes(newStrokes);
+          strokesRef.current = newStrokes;
+        }
+        if (newTexts && newTexts.length > 0) {
+          setCanvasTexts(newTexts);
+          canvasTextsRef.current = newTexts;
+        }
+        if (newThoughts && newThoughts.length > 0) {
+          setThoughts(newThoughts);
+          thoughtsRef.current = newThoughts;
+        }
+        if (newShapes && newShapes.length > 0) {
+          setShapes(newShapes);
+          shapesRef.current = newShapes;
+        }
+        if (newChecklists && newChecklists.length > 0) {
+          setChecklists(newChecklists);
+          checklistsRef.current = newChecklists;
+        }
+
+        pushHistory(
+          newStrokes || strokesRef.current,
+          newThoughts || thoughtsRef.current,
+          newTexts || canvasTextsRef.current,
+          imagesRef.current,
+          newShapes || shapesRef.current,
+          newChecklists || checklistsRef.current
+        );
+
+        setViewport({ x: 80, y: 80, zoom: 1 });
+        showToast(`Loaded "${thought.title}" onto canvas`);
+        setIsLiveFeedOpen(false);
+      } catch (err) {
+        console.error('Error loading stranger thought canvas data:', err);
+        showToast('Failed to parse thought canvas data');
+      }
+    },
+    [pushHistory, showToast]
+  );
+
+  // Sanitize text items on canvas with PII redaction
+  const handleSanitizeCanvasTexts = useCallback(
+    (sanitizer: (text: string) => string) => {
+      const sanitizedTexts = canvasTextsRef.current.map((item) => ({
+        ...item,
+        text: sanitizer(item.text),
+      }));
+      canvasTextsRef.current = sanitizedTexts;
+      setCanvasTexts(sanitizedTexts);
+      pushHistory(strokesRef.current, thoughtsRef.current, sanitizedTexts);
+      showToast('Canvas text sanitized & redacted');
+    },
+    [pushHistory, showToast]
+  );
+
   const activeTextItem = activeTextId ? canvasTexts.find((t) => t.id === activeTextId) : null;
   const isPenTool = currentTool === 'pen' || currentTool === 'pencil' || currentTool === 'highlighter' || currentTool === 'eraser';
 
@@ -3339,10 +3612,22 @@ export const InfiniteStylusCanvas: React.FC = () => {
       {/* Top Notification Toast */}
       <TopToast message={toastMessage} />
 
-      {/* Top Left: Active Note Title */}
-      <div className="fixed top-3 left-3 z-30 pointer-events-auto">
+      {/* Top Left: Minimalist Hamburger Menu & Active Note Title */}
+      <div className="fixed top-3 left-3 z-30 flex items-center gap-2 pointer-events-auto">
+        {/* Hamburger Menu Button */}
+        <button
+          type="button"
+          onClick={() => setIsNavDrawerOpen(true)}
+          className="flex items-center justify-center w-9 h-9 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-2xs backdrop-blur-md transition-all active:scale-95 cursor-pointer"
+          aria-label="Open Navigation Menu"
+          title="Menu & Navigation"
+        >
+          <Menu className="w-4 h-4 text-neutral-700" />
+        </button>
+
+        {/* Note Title */}
         {isEditingTopTitle ? (
-          <div className="flex items-center gap-1 bg-white/95 backdrop-blur-md border border-neutral-200/90 rounded-full px-2.5 py-1 shadow-sm">
+          <div className="flex items-center gap-1 bg-white/95 backdrop-blur-md border border-neutral-200/90 rounded-full px-3 py-1.5 shadow-2xs">
             <input
               type="text"
               value={topTitleInput}
@@ -3381,10 +3666,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
               setTopTitleInput(activeProject?.title || 'Untitled Note');
               setIsEditingTopTitle(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white/90 hover:bg-white text-neutral-700 hover:text-neutral-900 border border-neutral-200/90 shadow-sm backdrop-blur-md transition-all group active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-1.5 h-9 rounded-full text-xs font-medium bg-white/95 hover:bg-white text-neutral-700 hover:text-neutral-900 border border-neutral-200/90 shadow-2xs backdrop-blur-md transition-all group active:scale-95 cursor-pointer"
             title="Click to rename this note"
           >
-            <span className="max-w-[120px] sm:max-w-[200px] truncate" suppressHydrationWarning>
+            <span className="max-w-[110px] sm:max-w-[180px] truncate" suppressHydrationWarning>
               {activeProject?.title || 'Untitled Note'}
             </span>
             <Edit3 className="w-3 h-3 text-neutral-400 group-hover:text-neutral-700 transition-colors shrink-0" />
@@ -3392,9 +3677,9 @@ export const InfiniteStylusCanvas: React.FC = () => {
         )}
       </div>
 
-      {/* Top Right: Subtle Action Controls */}
-      <div className="fixed top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-white/90 hover:bg-white/95 backdrop-blur-md border border-neutral-200/90 shadow-sm pointer-events-auto transition-all">
-        {/* Mode Toggle */}
+      {/* Top Right: Streamlined Essential Controls */}
+      <div className="fixed top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-white/95 hover:bg-white backdrop-blur-md border border-neutral-200/90 shadow-2xs pointer-events-auto transition-all">
+        {/* Mode Toggle (Draw vs Move) */}
         <button
           type="button"
           onClick={() => {
@@ -3406,7 +3691,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
               showToast('Switched to Drawing mode');
             }
           }}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
             isPenTool
               ? 'bg-neutral-900 text-white shadow-xs'
               : 'text-neutral-700 hover:bg-neutral-100'
@@ -3422,65 +3707,45 @@ export const InfiniteStylusCanvas: React.FC = () => {
           ) : (
             <Hand className="w-3.5 h-3.5 text-neutral-600" />
           )}
-          <span className="hidden sm:inline">{isPenTool ? 'Draw' : 'Move'}</span>
+          <span className="text-[11px] font-medium">{isPenTool ? 'Draw' : 'Move'}</span>
         </button>
 
         <div className="w-px h-3.5 bg-neutral-200" />
 
-        {/* Time Machine Timelapse Replay */}
-        <button
-          type="button"
-          onClick={() => {
-            setTimeMachineStep(strokes.length);
-            setIsTimeMachineOpen(!isTimeMachineOpen);
-          }}
-          className={`p-1.5 rounded-full transition-colors ${
-            isTimeMachineOpen
-              ? 'bg-neutral-900 text-white shadow-xs'
-              : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
-          }`}
-          title="Replay drawing history"
-        >
-          <History className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Fit All to Screen */}
+        {/* Fit to screen */}
         <button
           type="button"
           onClick={handleFitToContent}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors"
+          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors cursor-pointer"
           title="Fit all content to screen"
         >
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
-        <div className="w-px h-3.5 bg-neutral-200" />
-
-        {/* Mini Radar Toggle */}
+        {/* Undo */}
         <button
           type="button"
-          onClick={() => {
-            setIsMiniRadarVisible((prev) => !prev);
-            showToast(isMiniRadarVisible ? 'Mini radar hidden' : 'Mini radar visible');
-          }}
+          onClick={handleUndo}
+          disabled={historyIndex <= 0}
           className={`p-1.5 rounded-full transition-colors ${
-            isMiniRadarVisible
-              ? 'text-blue-600 bg-blue-50 hover:bg-blue-100'
-              : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
+            historyIndex > 0 ? 'text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 cursor-pointer' : 'text-neutral-300 cursor-not-allowed'
           }`}
-          title={isMiniRadarVisible ? 'Hide Mini-Radar Navigator' : 'Show Mini-Radar Navigator'}
+          title="Undo (Ctrl+Z)"
         >
-          <Compass className="w-3.5 h-3.5" />
+          <Undo2 className="w-3.5 h-3.5" />
         </button>
 
-        {/* Quick Keyboard & Feature Guide */}
+        {/* Redo */}
         <button
           type="button"
-          onClick={() => setIsGuideOpen(true)}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors"
-          title="Keyboard shortcuts & Quick Guide (?)"
+          onClick={handleRedo}
+          disabled={historyIndex >= history.length - 1}
+          className={`p-1.5 rounded-full transition-colors ${
+            historyIndex < history.length - 1 ? 'text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 cursor-pointer' : 'text-neutral-300 cursor-not-allowed'
+          }`}
+          title="Redo (Ctrl+Y)"
         >
-          <HelpCircle className="w-3.5 h-3.5" />
+          <Redo2 className="w-3.5 h-3.5" />
         </button>
       </div>
 
@@ -3494,6 +3759,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onPointerCancel={handlePointerUp}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerUp}
+        onDoubleClick={handleCanvasDoubleClick}
         onContextMenu={(e) => e.preventDefault()}
         onWheel={handleWheel}
         className={`absolute inset-0 w-full h-full ${canvasCursor} touch-none select-none`}
@@ -3514,6 +3780,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
         >
           {/* Grab handle allowing user to smoothly move the text block around while typing */}
           <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
             onPointerDown={handleActiveTextMoveStart}
             className={`flex items-center gap-1.5 px-2.5 py-1 mb-1.5 rounded-md text-[11px] font-medium select-none shadow-sm w-fit pointer-events-auto transition-all ${
               isDraggingActiveText
@@ -3575,6 +3845,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       <CanvasItemTransformOverlay
         selected={activeTextId ? null : selectedItem}
         viewport={viewport}
+        lastCanvasTapTime={lastCanvasTapTime}
         onUpdateImage={handleUpdateImage}
         onUpdateShape={handleUpdateShape}
         onUpdateText={handleUpdateText}
@@ -3684,6 +3955,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
           showToast('PNG Exported');
         }}
         onExportJSON={handleExportJSON}
+        onShareThoughtDump={() => setIsShareModalOpen(true)}
         onTriggerAssistant={handleTriggerAssistant}
         isConversationalActive={false}
         isAssistantThinking={thoughts.some((t) => t.status === 'thinking')}
@@ -3691,6 +3963,62 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onImportImages={handleImportImageFiles}
         onAddShape={handleAddShape}
         onAddChecklist={handleAddChecklist}
+      />
+
+      {/* Share Anonymous Thought Dump Modal with Edge PII & Content Guardrail */}
+      <ShareThoughtDumpModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        canvasTexts={canvasTexts}
+        thoughts={thoughts}
+        checklists={checklists}
+        strokesCount={strokes.length}
+        projectTitle={activeProject?.title || 'Untitled Thought'}
+        onConfirmShare={handleConfirmShareThoughtDump}
+        onSanitizeCanvasTexts={handleSanitizeCanvasTexts}
+      />
+
+      {/* Anonymous Live Feed & Infinite Canvas Thought Explorer */}
+      <LiveThoughtFeedModal
+        isOpen={isLiveFeedOpen}
+        onClose={() => setIsLiveFeedOpen(false)}
+        onLoadThoughtToCanvas={handleLoadThoughtToCanvas}
+      />
+
+      {/* Thoughtspace Community Feedback & Rating System */}
+      <FeedbackRatingModal
+        isOpen={isFeedbackModalOpen}
+        onClose={() => setIsFeedbackModalOpen(false)}
+        triggerReason={feedbackTriggerReason}
+        engagementMetrics={{
+          strokesCount: strokes.length,
+          itemsCount: canvasTexts.length + images.length + shapes.length + checklists.length,
+          sessionDurationSec: sessionDurationSec,
+          sharedThoughtsCount: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('thoughtspace_shared_dumps') || '[]').length : 0,
+        }}
+        onSuccessToast={showToast}
+      />
+
+      {/* App Navigation Hamburger Drawer */}
+      <AppNavigationDrawer
+        isOpen={isNavDrawerOpen}
+        onClose={() => setIsNavDrawerOpen(false)}
+        onOpenProjects={() => setIsDrawerOpen(true)}
+        onOpenTimeMachine={() => {
+          setTimeMachineStep(strokes.length);
+          setIsTimeMachineOpen(true);
+        }}
+        onToggleMiniRadar={() => {
+          setIsMiniRadarVisible((prev) => !prev);
+          showToast(isMiniRadarVisible ? 'Mini radar hidden' : 'Mini radar visible');
+        }}
+        isMiniRadarVisible={isMiniRadarVisible}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
+        onOpenGuide={() => setIsGuideOpen(true)}
+        onOpenFeedback={() => {
+          setFeedbackTriggerReason('manual');
+          setIsFeedbackModalOpen(true);
+        }}
       />
 
       {/* Previous Projects & Conversations Drawer */}

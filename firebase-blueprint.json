@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "SharedThought": {
+      "title": "SharedThought",
+      "description": "Anonymously shared infinite canvas thought dump with vector strokes and semantic clustering metadata.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title or headline of the thought dump",
+          "maxLength": 100
+        },
+        "summary": {
+          "type": "string",
+          "description": "Algorithmic semantic summary used for stranger clustering",
+          "maxLength": 500
+        },
+        "category": {
+          "type": "string",
+          "description": "Dynamic category cluster assigned by the scaling recommendation engine",
+          "maxLength": 60
+        },
+        "authorAnonymousId": {
+          "type": "string",
+          "description": "Hashed anonymous client identifier with zero personally identifying information",
+          "maxLength": 64
+        },
+        "duration": {
+          "type": "string",
+          "description": "Retention window duration (e.g. 24h, 3d, 1w, 1m)",
+          "maxLength": 10
+        },
+        "expiresAt": {
+          "type": "number",
+          "description": "Timestamp in milliseconds after which the thought dump expires from live feed"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        },
+        "reactionCount": {
+          "type": "number",
+          "description": "Total sum of community anonymous reactions"
+        },
+        "reactions": {
+          "type": "object",
+          "description": "Map of reaction counts (e.g. resonate, inspire, reflect, empathy)"
+        },
+        "strokesCount": {
+          "type": "number",
+          "description": "Number of vector ink gestures"
+        },
+        "canvasPayload": {
+          "type": "string",
+          "description": "JSON serialized canvas elements for full infinite canvas interactive replay",
+          "maxLength": 800000
+        }
+      },
+      "required": ["title", "summary", "authorAnonymousId", "expiresAt", "createdAt", "canvasPayload"]
+    },
+    "ThoughtReaction": {
+      "title": "ThoughtReaction",
+      "description": "Anonymous reaction event sent from a stranger to a shared thought dump.",
+      "type": "object",
+      "properties": {
+        "thoughtId": {
+          "type": "string",
+          "description": "ID of the shared thought document",
+          "maxLength": 64
+        },
+        "reactionType": {
+          "type": "string",
+          "description": "Type of reaction (e.g. resonate, inspire, reflect, empathy)",
+          "enum": ["resonate", "inspire", "reflect", "empathy"]
+        },
+        "authorAnonymousId": {
+          "type": "string",
+          "description": "Anonymous hash of the reacting visitor",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp when reaction was submitted"
+        }
+      },
+      "required": ["thoughtId", "reactionType", "authorAnonymousId", "createdAt"]
+    },
+    "AppFeedback": {
+      "title": "AppFeedback",
+      "description": "Community user rating and feedback submission for Thoughtspace.",
+      "type": "object",
+      "properties": {
+        "rating": {
+          "type": "number",
+          "description": "Numerical rating between 1 and 5"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the feedback",
+          "maxLength": 50
+        },
+        "message": {
+          "type": "string",
+          "description": "Freeform user feedback text",
+          "maxLength": 2000
+        },
+        "authorAnonymousId": {
+          "type": "string",
+          "description": "Anonymous client ID",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp when feedback was submitted"
+        }
+      },
+      "required": ["rating", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/sharedThoughts/{thoughtId}": {
+      "schema": "SharedThought",
+      "description": "Global live feed of anonymous thought dumps accessible to all visitors."
+    },
+    "/sharedThoughts/{thoughtId}/reactions/{reactionId}": {
+      "schema": "ThoughtReaction",
+      "description": "Subcollection of non-comment anonymous reaction events for a thought dump."
+    },
+    "/feedback/{feedbackId}": {
+      "schema": "AppFeedback",
+      "description": "Community feedback and ratings submissions."
+    }
+  }
+}

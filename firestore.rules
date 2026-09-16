@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidSharedThought(data) {
+      return data.title is string && data.title.size() <= 100 &&
+             data.summary is string && data.summary.size() <= 500 &&
+             data.authorAnonymousId is string && data.authorAnonymousId.size() <= 64 &&
+             data.expiresAt is number &&
+             data.createdAt is number &&
+             data.canvasPayload is string && data.canvasPayload.size() <= 800000;
+    }
+
+    function isValidThoughtReaction(data) {
+      return data.thoughtId is string && data.thoughtId.size() <= 64 &&
+             data.reactionType in ['resonate', 'inspire', 'reflect', 'empathy'] &&
+             data.authorAnonymousId is string && data.authorAnonymousId.size() <= 64 &&
+             data.createdAt is number;
+    }
+
+    function isValidFeedback(data) {
+      return data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.createdAt is number &&
+             (!('message' in data) || (data.message is string && data.message.size() <= 2000)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 50));
+    }
+
+    // Connection health check
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // Shared Thoughts Collection (Live Feed)
+    match /sharedThoughts/{thoughtId} {
+      allow get: if isValidId(thoughtId);
+      allow list: if true;
+      allow create: if isValidId(thoughtId) && isValidSharedThought(incoming());
+      allow update: if isValidId(thoughtId) && (
+        // Community reaction count increment
+        incoming().diff(existing()).affectedKeys().hasOnly(['reactionCount', 'reactions'])
+      );
+      allow delete: if isValidId(thoughtId) && (
+        request.auth != null && resource.data.authorAnonymousId == request.auth.uid
+      );
+
+      // Anonymous reactions subcollection
+      match /reactions/{reactionId} {
+        allow get: if isValidId(thoughtId) && isValidId(reactionId);
+        allow list: if isValidId(thoughtId);
+        allow create: if isValidId(thoughtId) && isValidId(reactionId) && isValidThoughtReaction(incoming());
+        allow update, delete: if false;
+      }
+    }
+
+    // Community Feedback Collection
+    match /feedback/{feedbackId} {
+      allow create: if isValidId(feedbackId) && isValidFeedback(incoming());
+      allow read, update, delete: if false;
+    }
+  }
+}

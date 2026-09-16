@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Infinite Stylus Workspace',
-  description: 'Infinite stylus brainstorming canvas with organic handwriting AI assistance, gesture text extraction, and liquid navigation.',
+  description: 'Infinite stylus thought dump canvas with organic handwriting AI, client-side PII privacy guardrails, anonymous broadcast, and community feedback rating.',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -17,13 +17,13 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: 'Infinite Stylus Workspace',
-    description: 'Infinite stylus brainstorming canvas with organic handwriting AI assistance, gesture text extraction, and liquid navigation.',
+    description: 'Infinite stylus thought dump canvas with organic handwriting AI, client-side PII privacy guardrails, anonymous broadcast, and community feedback rating.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Infinite Stylus Workspace',
-    description: 'Infinite stylus brainstorming canvas with organic handwriting AI assistance, gesture text extraction, and liquid navigation.',
+    description: 'Infinite stylus thought dump canvas with organic handwriting AI, client-side PII privacy guardrails, anonymous broadcast, and community feedback rating.',
   },
 };
 

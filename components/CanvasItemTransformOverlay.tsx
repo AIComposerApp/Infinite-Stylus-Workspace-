@@ -34,6 +34,7 @@ export type SelectedCanvasItem =
 interface CanvasItemTransformOverlayProps {
   selected: SelectedCanvasItem | null;
   viewport: Viewport;
+  lastCanvasTapTime?: number;
   onUpdateImage: (item: CanvasImageItem) => void;
   onUpdateShape: (item: CanvasShapeItem) => void;
   onUpdateText: (item: CanvasTextItem) => void;
@@ -78,6 +79,7 @@ const SHAPE_STROKE_PRESETS = [
 export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProps> = ({
   selected,
   viewport,
+  lastCanvasTapTime,
   onUpdateImage,
   onUpdateShape,
   onUpdateText,
@@ -348,7 +350,7 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   const itemX = item.x;
   const itemY = item.y;
   const itemWidth = isText
-    ? (textItem?.width || (textBounds ? textBounds.width : 240))
+    ? Math.max(60, textBounds ? textBounds.width : 120)
     : (textBounds ? textBounds.width : Math.max(20, (item as { width?: number }).width || 240));
   const itemHeight = textBounds ? textBounds.height : Math.max(20, (item as { height?: number }).height || 120);
 
@@ -362,11 +364,12 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
   const handleDragStart = (e: React.PointerEvent) => {
     e.stopPropagation();
 
-    // Fast double-tap detection for touch/stylus
+    // Fast double-tap detection for touch/stylus/mouse across canvas and overlay boundaries
     const now = Date.now();
     const isDoubleTap =
-      now - lastOverlayTapTimeRef.current < 350 &&
-      Math.hypot(e.clientX - lastOverlayTapPosRef.current.x, e.clientY - lastOverlayTapPosRef.current.y) < 25;
+      (now - lastOverlayTapTimeRef.current < 450 &&
+        Math.hypot(e.clientX - lastOverlayTapPosRef.current.x, e.clientY - lastOverlayTapPosRef.current.y) < 35) ||
+      (typeof lastCanvasTapTime === 'number' && lastCanvasTapTime > 0 && now - lastCanvasTapTime < 520);
 
     lastOverlayTapTimeRef.current = now;
     lastOverlayTapPosRef.current = { x: e.clientX, y: e.clientY };
@@ -830,80 +833,88 @@ export const CanvasItemTransformOverlay: React.FC<CanvasItemTransformOverlayProp
         </div>
       )}
 
-      {/* 4 Corner Resize Handles in Crisp White & Charcoal Black */}
-      {/* NW */}
-      <div
-        onPointerDown={(e) => handleResizeStart('nw', e)}
-        className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
-        title="Resize top-left"
-      />
-      {/* NE */}
-      <div
-        onPointerDown={(e) => handleResizeStart('ne', e)}
-        className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
-        title="Resize top-right"
-      />
-      {/* SE */}
-      <div
-        onPointerDown={(e) => handleResizeStart('se', e)}
-        className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
-        title="Resize bottom-right"
-      />
-      {/* SW */}
-      <div
-        onPointerDown={(e) => handleResizeStart('sw', e)}
-        className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
-        title="Resize bottom-left"
-      />
+      {/* 4 Corner Resize Handles in Crisp White & Charcoal Black (Images & Shapes only) */}
+      {!isText && (
+        <>
+          {/* NW */}
+          <div
+            onPointerDown={(e) => handleResizeStart('nw', e)}
+            className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
+            title="Resize top-left"
+          />
+          {/* NE */}
+          <div
+            onPointerDown={(e) => handleResizeStart('ne', e)}
+            className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
+            title="Resize top-right"
+          />
+          {/* SE */}
+          <div
+            onPointerDown={(e) => handleResizeStart('se', e)}
+            className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
+            title="Resize bottom-right"
+          />
+          {/* SW */}
+          <div
+            onPointerDown={(e) => handleResizeStart('sw', e)}
+            className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-[#18181B] rounded-full shadow-md cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
+            title="Resize bottom-left"
+          />
+        </>
+      )}
 
-      {/* 4 Dynamic Curvy Flowchart Connection Anchors on all 4 sides */}
-      {/* Top Anchor */}
-      <div
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onStartConnectorDrag?.(item.id, 'top', itemX + itemWidth / 2, itemY);
-        }}
-        className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
-        title="Drag connector from top side"
-      >
-        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
-      </div>
+      {/* 4 Dynamic Curvy Flowchart Connection Anchors on all 4 sides (Images & Shapes only) */}
+      {!isText && (
+        <>
+          {/* Top Anchor */}
+          <div
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onStartConnectorDrag?.(item.id, 'top', itemX + itemWidth / 2, itemY);
+            }}
+            className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+            title="Drag connector from top side"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+          </div>
 
-      {/* Right Anchor */}
-      <div
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onStartConnectorDrag?.(item.id, 'right', itemX + itemWidth, itemY + itemHeight / 2);
-        }}
-        className="absolute top-1/2 -right-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
-        title="Drag connector from right side"
-      >
-        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
-      </div>
+          {/* Right Anchor */}
+          <div
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onStartConnectorDrag?.(item.id, 'right', itemX + itemWidth, itemY + itemHeight / 2);
+            }}
+            className="absolute top-1/2 -right-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+            title="Drag connector from right side"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+          </div>
 
-      {/* Bottom Anchor */}
-      <div
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onStartConnectorDrag?.(item.id, 'bottom', itemX + itemWidth / 2, itemY + itemHeight);
-        }}
-        className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
-        title="Drag connector from bottom side"
-      >
-        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
-      </div>
+          {/* Bottom Anchor */}
+          <div
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onStartConnectorDrag?.(item.id, 'bottom', itemX + itemWidth / 2, itemY + itemHeight);
+            }}
+            className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+            title="Drag connector from bottom side"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+          </div>
 
-      {/* Left Anchor */}
-      <div
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onStartConnectorDrag?.(item.id, 'left', itemX, itemY + itemHeight / 2);
-        }}
-        className="absolute top-1/2 -left-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
-        title="Drag connector from left side"
-      >
-        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
-      </div>
+          {/* Left Anchor */}
+          <div
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onStartConnectorDrag?.(item.id, 'left', itemX, itemY + itemHeight / 2);
+            }}
+            className="absolute top-1/2 -left-2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-600 hover:bg-blue-600 hover:scale-125 rounded-full shadow-md cursor-crosshair pointer-events-auto transition-all flex items-center justify-center group z-40"
+            title="Drag connector from left side"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-600 group-hover:bg-white transition-colors" />
+          </div>
+        </>
+      )}
     </div>
   );
 };
