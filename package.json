@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack -p 3000",
-    "build": "next build",
+    "build": "cd /app/applet && next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "cd /app/applet && next lint"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

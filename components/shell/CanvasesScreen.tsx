@@ -222,11 +222,19 @@ const SwipeableCanvasItem: React.FC<SwipeableCanvasItemProps> = ({
           isActive ? 'bg-[var(--phone-chip)]/70' : ''
         }`}
       >
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => {
-            if (isDraggingRef.current) return;
+            if (isDraggingRef.current || isEditing) return;
             onSelect();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              if (isDraggingRef.current || isEditing) return;
+              e.preventDefault();
+              onSelect();
+            }
           }}
           className="flex items-center gap-3 sm:gap-3.5 flex-1 min-w-0 bg-transparent border-none text-left cursor-pointer p-0"
         >
@@ -274,7 +282,7 @@ const SwipeableCanvasItem: React.FC<SwipeableCanvasItemProps> = ({
               {formatSubtitle(project)}
             </div>
           </div>
-        </button>
+        </div>
 
         {/* Right Desktop/Hover Quick Actions */}
         <div className="flex items-center gap-1 shrink-0 ml-2">

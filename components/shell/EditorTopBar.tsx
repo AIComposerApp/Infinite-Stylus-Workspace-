@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronLeft,
   Share2,
@@ -158,106 +159,117 @@ export const EditorTopBar: React.FC<EditorTopBarProps> = ({
         </div>
       </div>
 
-      {/* Prototype Glass More Menu */}
-      {isMenuOpen && (
-        <div
-          ref={menuRef}
-          role="menu"
-          className="absolute top-[70px] right-3.5 z-50 w-[252px] p-1.5 bg-[var(--glass)] border border-[var(--hair)] rounded-[18px] backdrop-blur-2xl shadow-xl flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-150"
-        >
-          {/* Redo */}
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!canRedo}
-            onClick={() => {
-              onRedo();
-              setIsMenuOpen(false);
+      {/* Fluid Spring Glass More Menu */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <motion.div
+            ref={menuRef}
+            role="menu"
+            initial={{ opacity: 0, scale: 0.88, y: -10, originX: 0.95, originY: 0 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: -6 }}
+            transition={{
+              type: 'spring',
+              stiffness: 420,
+              damping: 28,
+              mass: 0.7,
             }}
-            className={`flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] transition-colors cursor-pointer ${
-              canRedo
-                ? 'text-[var(--ink)] hover:bg-[var(--chip)]'
-                : 'text-[var(--mute)] opacity-50 cursor-not-allowed'
-            }`}
+            className="absolute top-[70px] right-3.5 z-50 w-[252px] p-1.5 bg-[var(--glass)] border border-[var(--hair)] rounded-[22px] backdrop-blur-2xl shadow-2xl flex flex-col gap-0.5 select-none"
           >
-            <span>Redo</span>
-            <Redo2 className="w-5 h-5 text-[var(--mute)]" />
-          </button>
+            {/* Redo */}
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canRedo}
+              onClick={() => {
+                onRedo();
+                setIsMenuOpen(false);
+              }}
+              className={`flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] transition-all cursor-pointer active:scale-[0.98] ${
+                canRedo
+                  ? 'text-[var(--ink)] hover:bg-[var(--chip)]'
+                  : 'text-[var(--mute)] opacity-40 cursor-not-allowed'
+              }`}
+            >
+              <span className="font-medium">Redo</span>
+              <Redo2 className="w-4 h-4 text-[var(--mute)]" />
+            </button>
 
-          {/* Fit to screen */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onFitToScreen();
-              setIsMenuOpen(false);
-            }}
-            className="flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] text-[var(--ink)] hover:bg-[var(--chip)] transition-colors cursor-pointer"
-          >
-            <span>Fit to screen</span>
-            <Maximize2 className="w-5 h-5 text-[var(--mute)]" />
-          </button>
+            {/* Fit to screen */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onFitToScreen();
+                setIsMenuOpen(false);
+              }}
+              className="flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] font-medium text-[var(--ink)] hover:bg-[var(--chip)] transition-all cursor-pointer active:scale-[0.98]"
+            >
+              <span>Fit to screen</span>
+              <Maximize2 className="w-4 h-4 text-[var(--mute)]" />
+            </button>
 
-          {/* Replay history */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onReplayHistory();
-              setIsMenuOpen(false);
-            }}
-            className="flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] text-[var(--ink)] hover:bg-[var(--chip)] transition-colors cursor-pointer"
-          >
-            <span>Replay history</span>
-            <History className="w-5 h-5 text-[var(--mute)]" />
-          </button>
+            {/* Replay history */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onReplayHistory();
+                setIsMenuOpen(false);
+              }}
+              className="flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] font-medium text-[var(--ink)] hover:bg-[var(--chip)] transition-all cursor-pointer active:scale-[0.98]"
+            >
+              <span>Replay history</span>
+              <History className="w-4 h-4 text-[var(--mute)]" />
+            </button>
 
-          {/* Mini-map */}
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            aria-checked={isMiniMapActive}
-            onClick={() => {
-              onToggleMiniMap();
-              setIsMenuOpen(false);
-            }}
-            className="flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] text-[var(--ink)] hover:bg-[var(--chip)] transition-colors cursor-pointer"
-          >
-            <span>Mini-map</span>
-            {isMiniMapActive && <Check className="w-5 h-5 text-[var(--ink)]" />}
-          </button>
+            {/* Mini-map */}
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={isMiniMapActive}
+              onClick={() => {
+                onToggleMiniMap();
+                setIsMenuOpen(false);
+              }}
+              className="flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] font-medium text-[var(--ink)] hover:bg-[var(--chip)] transition-all cursor-pointer active:scale-[0.98]"
+            >
+              <span>Mini-map</span>
+              {isMiniMapActive && <Check className="w-4 h-4 text-[var(--ink)]" />}
+            </button>
 
-          <div className="h-[0.5px] bg-[var(--hair)] my-1 mx-2" />
+            <div className="h-[0.5px] bg-[var(--hair)] my-1 mx-2" />
 
-          {/* Guide and shortcuts */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onOpenGuide();
-              setIsMenuOpen(false);
-            }}
-            className="flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] text-[var(--ink)] hover:bg-[var(--chip)] transition-colors cursor-pointer"
-          >
-            <span>Guide and shortcuts</span>
-            <HelpCircle className="w-5 h-5 text-[var(--mute)]" />
-          </button>
+            {/* Guide and shortcuts */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onOpenGuide();
+                setIsMenuOpen(false);
+              }}
+              className="flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] font-medium text-[var(--ink)] hover:bg-[var(--chip)] transition-all cursor-pointer active:scale-[0.98]"
+            >
+              <span>Guide and shortcuts</span>
+              <HelpCircle className="w-4 h-4 text-[var(--mute)]" />
+            </button>
 
-          {/* Send feedback */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onOpenFeedback();
-              setIsMenuOpen(false);
-            }}
-            className="flex justify-between items-center w-full h-11 px-3 rounded-xl text-[16px] text-[var(--ink)] hover:bg-[var(--chip)] transition-colors cursor-pointer"
-          >
-            <span>Send feedback</span>
-            <MessageCircle className="w-5 h-5 text-[var(--mute)]" />
-          </button>
-        </div>
-      )}
+            {/* Send feedback */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onOpenFeedback();
+                setIsMenuOpen(false);
+              }}
+              className="flex justify-between items-center w-full h-11 px-3.5 rounded-xl text-[15px] font-medium text-[var(--ink)] hover:bg-[var(--chip)] transition-all cursor-pointer active:scale-[0.98]"
+            >
+              <span>Send feedback</span>
+              <MessageCircle className="w-4 h-4 text-[var(--mute)]" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 };

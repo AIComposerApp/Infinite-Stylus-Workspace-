@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Star, X, Check, Heart, MessageSquareHeart, Sparkles } from 'lucide-react';
+import { STORAGE_KEYS } from '@/lib/constants';
 
 interface FeedbackRatingModalProps {
   isOpen: boolean;
@@ -77,8 +78,8 @@ export const FeedbackRatingModal: React.FC<FeedbackRatingModalProps> = ({
       if (res.ok) {
         setIsSubmitted(true);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('thoughtspace_feedback_submitted', 'true');
-          localStorage.setItem('thoughtspace_last_feedback_at', String(Date.now()));
+          localStorage.setItem(STORAGE_KEYS.FEEDBACK_SUBMITTED, 'true');
+          localStorage.setItem(STORAGE_KEYS.FEEDBACK_LAST_AT, String(Date.now()));
         }
         if (onSuccessToast) {
           onSuccessToast('Feedback received! Thank you for shaping Thoughtspace.');
@@ -97,7 +98,7 @@ export const FeedbackRatingModal: React.FC<FeedbackRatingModalProps> = ({
 
   const handleDontAskAgain = () => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('thoughtspace_feedback_opt_out', 'true');
+      localStorage.setItem(STORAGE_KEYS.FEEDBACK_OPT_OUT, 'true');
     }
     onClose();
   };

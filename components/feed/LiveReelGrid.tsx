@@ -153,10 +153,7 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
     velocityXRef.current = 0;
     isAxisLockedRef.current = null;
     pointerIdRef.current = e.pointerId;
-
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
+    // Note: Do not call setPointerCapture here to allow natural mobile vertical scrolling
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -172,19 +169,19 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
     lastXRef.current = e.clientX;
     lastTimeRef.current = now;
 
-    // Axis Locking: if vertical movement dominates, release capture to allow natural scrolling
+    // Axis Locking: if vertical movement dominates, release to allow natural scrolling
     if (isAxisLockedRef.current === null) {
       if (Math.abs(deltaY) > 8 && Math.abs(deltaY) > Math.abs(deltaX)) {
         isAxisLockedRef.current = false;
-        try {
-          e.currentTarget.releasePointerCapture(e.pointerId);
-        } catch {}
         pointerIdRef.current = null;
         return;
       }
-      if (Math.abs(deltaX) > 8) {
+      if (Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
         isAxisLockedRef.current = true;
         setIsDragging(true);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
       }
     }
 
@@ -461,11 +458,16 @@ export const LiveReelGrid: React.FC<LiveReelGridProps> = ({ thoughts, onOpenFeed
 
   return (
     <div
-      style={{ overflow: 'visible', overflowX: 'visible' }}
-      className="w-full h-full overflow-y-auto px-3 sm:px-6 pt-20 pb-28 bg-[#FAF9F6]"
+      style={{
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        WebkitOverflowScrolling: 'touch',
+        touchAction: 'pan-y',
+        overscrollBehaviorY: 'contain',
+      }}
+      className="w-full h-full px-3 sm:px-6 pt-20 pb-28 bg-[#FAF9F6]"
     >
       <div
-        style={{ overflow: 'visible', overflowX: 'visible' }}
         className="max-w-3xl mx-auto"
       >
         {/* Helper Hint */}

@@ -719,18 +719,18 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
           </button>
 
           {/* Action 3: Share canvas / Export */}
-          <button
-            type="button"
-            onClick={() => {
-              closeAll();
-              onExportPNG();
-            }}
-            className="flex items-center justify-between w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
-          >
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium transition-colors">
+            <button
+              type="button"
+              onClick={() => {
+                closeAll();
+                onExportPNG();
+              }}
+              className="flex items-center gap-3 flex-1 h-full text-left cursor-pointer bg-transparent border-none p-0 text-[#141414]"
+            >
               <Share2 className="w-5 h-5 text-neutral-500" />
               <span>Share canvas (PNG)</span>
-            </div>
+            </button>
             <button
               type="button"
               onClick={(e) => {
@@ -738,11 +738,11 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
                 closeAll();
                 onExportPDF();
               }}
-              className="text-xs px-2.5 py-1 rounded-lg bg-black/[0.06] hover:bg-black/[0.1] text-neutral-700"
+              className="text-xs px-2.5 py-1 rounded-lg bg-black/[0.06] hover:bg-black/[0.1] text-neutral-700 cursor-pointer transition-colors"
             >
               or PDF
             </button>
-          </button>
+          </div>
 
           {/* Action 4: Ask AI */}
           <button

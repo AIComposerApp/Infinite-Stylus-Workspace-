@@ -11,6 +11,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
+import { STORAGE_KEYS } from './constants';
 
 export interface SharedThoughtDocument {
   id: string;
@@ -49,12 +50,12 @@ export const REACTION_CONFIG: Record<ReactionType, { label: string; icon: string
  */
 export function getAnonymousAuthorId(): string {
   if (typeof window === 'undefined') return 'anon_server';
-  const STORAGE_KEY = 'thoughtspace_anonymous_id';
-  let id = localStorage.getItem(STORAGE_KEY);
+  const key = STORAGE_KEYS.ANONYMOUS_ID;
+  let id = localStorage.getItem(key);
   if (!id) {
     const randomBytes = Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
     id = `anon_${randomBytes}`;
-    localStorage.setItem(STORAGE_KEY, id);
+    localStorage.setItem(key, id);
   }
   return id;
 }
@@ -133,7 +134,7 @@ export async function publishThoughtDumpToFirestore(payload: {
     // Save to locally authored thoughts list for reaction notifications
     if (typeof window !== 'undefined') {
       try {
-        const authoredKey = 'thoughtspace_my_authored_thoughts';
+        const authoredKey = STORAGE_KEYS.MY_AUTHORED_THOUGHTS;
         const existing = JSON.parse(localStorage.getItem(authoredKey) || '[]');
         existing.push(thoughtId);
         localStorage.setItem(authoredKey, JSON.stringify(existing));

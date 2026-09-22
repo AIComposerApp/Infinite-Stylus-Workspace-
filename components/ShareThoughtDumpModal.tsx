@@ -86,20 +86,18 @@ export const ShareThoughtDumpModal: React.FC<ShareThoughtDumpModalProps> = ({
     return aggregateCanvasTextContent(canvasTexts, thoughts, checklists);
   }, [canvasTexts, thoughts, checklists]);
 
+  const handleClose = () => {
+    setDragY(0);
+    setPublishError(null);
+    setIsPublishing(false);
+    setIsPublished(false);
+    setHasSanitizedLocally(false);
+    onClose();
+  };
+
   // Initial scan and summary on modal open
   useEffect(() => {
-    if (!isOpen) {
-      setDragY(0);
-      setPublishError(null);
-      setIsPublishing(false);
-      setIsPublished(false);
-      return;
-    }
-
-    setIsScanning(true);
-    setIsSummaryLoading(true);
-    setPublishError(null);
-    setHasSanitizedLocally(false);
+    if (!isOpen) return;
 
     // Run real PII scanner
     const timer1 = setTimeout(() => {
@@ -138,7 +136,12 @@ export const ShareThoughtDumpModal: React.FC<ShareThoughtDumpModalProps> = ({
     if (onSanitizeCanvasTexts) {
       onSanitizeCanvasTexts(sanitizeTextContent);
       setHasSanitizedLocally(true);
-      setScanResult({ isClean: true, findings: [] });
+      setScanResult({
+        hasPii: false,
+        hasExplicit: false,
+        findings: [],
+        summary: 'Canvas text sanitized. All sensitive patterns redacted.',
+      });
     }
   };
 
@@ -204,7 +207,7 @@ export const ShareThoughtDumpModal: React.FC<ShareThoughtDumpModalProps> = ({
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
     if (dragY > 120) {
-      onClose();
+      handleClose();
     }
     setDragY(0);
   };
@@ -224,7 +227,7 @@ export const ShareThoughtDumpModal: React.FC<ShareThoughtDumpModalProps> = ({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25 }}
-              onClick={onClose}
+              onClick={handleClose}
               className="absolute inset-0 bg-black/40 backdrop-blur-xs cursor-pointer z-10"
             />
 
@@ -262,7 +265,7 @@ export const ShareThoughtDumpModal: React.FC<ShareThoughtDumpModalProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={onClose}
+                    onClick={handleClose}
                     className="w-8 h-8 rounded-full bg-black/5 hover:bg-black/10 text-neutral-700 flex items-center justify-center transition-colors cursor-pointer shrink-0 mt-0.5"
                     aria-label="Close"
                   >
