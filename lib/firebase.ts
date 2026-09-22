@@ -1,5 +1,4 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
 import {
   getFirestore,
   doc,
@@ -13,7 +12,6 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 // Initialize Firestore with custom databaseId
 export const db: Firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
 
 // Test connection on boot as mandated by Firebase Skill
 if (typeof window !== 'undefined') {
@@ -46,11 +44,6 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
   };
 }
 
@@ -58,15 +51,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth?.currentUser?.uid ?? null,
-      email: auth?.currentUser?.email ?? null,
-      emailVerified: auth?.currentUser?.emailVerified ?? null,
-      isAnonymous: auth?.currentUser?.isAnonymous ?? true,
-      tenantId: auth?.currentUser?.tenantId ?? null,
-      providerInfo: auth?.currentUser?.providerData?.map((p) => ({
-        providerId: p.providerId,
-        email: p.email,
-      })) ?? [],
+      userId: null,
+      email: null,
+      emailVerified: null,
+      isAnonymous: true,
     },
     operationType,
     path,

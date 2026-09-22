@@ -14,7 +14,6 @@ import {
   CanvasConnectorEndpoint,
   ConnectorAnchorSide,
 } from '@/types/canvas';
-import { STORAGE_KEYS } from '@/lib/constants';
 import { jsPDF } from 'jspdf';
 
 // Calculate bounds for a set of points
@@ -962,8 +961,8 @@ export async function exportCanvasToPDF(
 }
 
 // Local storage project persistence
-const STORAGE_KEY = STORAGE_KEYS.PROJECTS;
-const ACTIVE_PROJECT_KEY = STORAGE_KEYS.ACTIVE_PROJECT_ID;
+const STORAGE_KEY = 'stylus_infinite_workspace_projects_v2';
+const ACTIVE_PROJECT_KEY = 'stylus_infinite_workspace_active_id_v2';
 
 const DEFAULT_INITIAL_PROJECT_ID = 'proj-seed-default-1';
 

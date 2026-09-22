@@ -41,7 +41,6 @@ import {
   cleanAiOutput,
 } from '@/lib/canvas-utils';
 import { generateOfflineAssistantThought } from '@/lib/offline-intelligence';
-import { parseOrGenerateThoughtCanvas } from '@/lib/thought-canvas-generator';
 import { LiquidBottomDock } from '@/components/LiquidBottomDock';
 import { ThoughtBubbleOffScreen } from '@/components/ThoughtBubbleOffScreen';
 import { ProjectsDrawer } from '@/components/ProjectsDrawer';
@@ -844,22 +843,16 @@ export const InfiniteStylusCanvas: React.FC = () => {
     [showToast]
   );
 
-  // Load thought post from Explore screen into canvas with full Time Machine playback
+  // Load thought post from Explore screen into canvas
   const handleOpenExplorePost = useCallback(
     (post: ExplorePost) => {
       const newProjId = 'proj-explore-' + Date.now();
-      const generated = parseOrGenerateThoughtCanvas(
-        post.title,
-        post.category,
-        post.sharedDoc?.canvasPayload
-      );
-
       const P = [
         [120, 160],
         [280, 200],
         [180, 300],
       ];
-      const fallbackShapes: CanvasShapeItem[] = post.nodes.map((n, i) => {
+      const newShapes: CanvasShapeItem[] = post.nodes.map((n, i) => {
         const pt = P[i % P.length];
         return {
           id: 'shape-' + Date.now() + '-' + i,
@@ -874,12 +867,12 @@ export const InfiniteStylusCanvas: React.FC = () => {
           text: n,
           textColor: '#141414',
           fontSize: 14,
-          createdAt: Date.now() + i * 100,
-          updatedAt: Date.now() + i * 100,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
         };
       });
 
-      const fallbackTexts: CanvasTextItem[] = [
+      const newTexts: CanvasTextItem[] = [
         {
           id: 'text-' + Date.now(),
           text: post.quote,
@@ -887,8 +880,8 @@ export const InfiniteStylusCanvas: React.FC = () => {
           y: 420,
           fontSize: 15,
           color: '#141414',
-          createdAt: Date.now() + 400,
-          updatedAt: Date.now() + 400,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
         },
       ];
 
@@ -898,13 +891,10 @@ export const InfiniteStylusCanvas: React.FC = () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         isPinned: false,
-        strokes: generated.strokes && generated.strokes.length > 0 ? generated.strokes : [],
-        thoughts: generated.thoughts && generated.thoughts.length > 0 ? generated.thoughts : [],
-        canvasTexts: generated.canvasTexts && generated.canvasTexts.length > 0 ? generated.canvasTexts : fallbackTexts,
-        shapes: generated.shapes && generated.shapes.length > 0 ? generated.shapes : fallbackShapes,
-        images: generated.images || [],
-        checklists: generated.checklists || [],
-        connectors: generated.connectors || [],
+        strokes: [],
+        thoughts: [],
+        canvasTexts: newTexts,
+        shapes: newShapes,
         viewport: { x: 0, y: 0, zoom: 1 },
       };
 
@@ -915,15 +905,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
       });
       handleSelectProject(newProjId);
       setIsEditorOpen(true);
-
-      const totalItems =
-        newProj.strokes.length +
-        newProj.shapes.length +
-        newProj.canvasTexts.length +
-        newProj.thoughts.length;
-      setTimeMachineStep(totalItems);
-      setIsTimeMachineOpen(true);
-      showToast(`Dial Back Ready: Dial to any point in the thought process`);
+      showToast(`Opened "${post.title}"`);
     },
     [handleSelectProject, showToast]
   );
@@ -4108,11 +4090,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
         projectTitle={activeProject?.title || 'Untitled Thought'}
         onConfirmShare={handleConfirmShareThoughtDump}
         onSanitizeCanvasTexts={handleSanitizeCanvasTexts}
-        onViewExplore={() => {
-          setIsShareModalOpen(false);
-          setIsEditorOpen(false);
-          setActiveShellTab('explore');
-        }}
       />
 
       {/* Anonymous Live Feed & Infinite Canvas Thought Explorer */}

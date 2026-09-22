@@ -2,26 +2,12 @@
 
 import React from 'react';
 import { Palette, Compass } from 'lucide-react';
-import { HoldToDragPillDock, PillDockItem } from '@/components/ui/HoldToDragPillDock';
 
 interface AppTabBarProps {
   activeTab: 'canvases' | 'explore';
   onSelectTab: (tab: 'canvases' | 'explore') => void;
   isVisible: boolean;
 }
-
-const TAB_ITEMS: PillDockItem<'canvases' | 'explore'>[] = [
-  {
-    id: 'canvases',
-    label: 'Canvases',
-    icon: Palette,
-  },
-  {
-    id: 'explore',
-    label: 'Explore',
-    icon: Compass,
-  },
-];
 
 export const AppTabBar: React.FC<AppTabBarProps> = ({
   activeTab,
@@ -31,23 +17,42 @@ export const AppTabBar: React.FC<AppTabBarProps> = ({
   if (!isVisible) return null;
 
   return (
-    <div
-      className="fixed bottom-5 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[270px] sm:w-[290px] max-w-[92vw] pointer-events-auto"
-      style={{
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      }}
+    <nav
+      className="absolute left-0 right-0 bottom-0 h-[83px] pb-[26px] flex items-center justify-around bg-[var(--phone-glass)] border-t border-[var(--phone-hair)] z-30 backdrop-blur-2xl transition-opacity duration-200"
+      aria-label="Main navigation"
     >
-      <div className="relative p-1 rounded-full bg-white/80 dark:bg-neutral-900/80 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] shadow-[0_12px_36px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.06)]">
-        <HoldToDragPillDock<'canvases' | 'explore'>
-          items={TAB_ITEMS}
-          activeId={activeTab}
-          onSelect={onSelectTab}
-          size="md"
-          ariaLabel="Primary bottom navigation: drag or tap to switch views"
-        />
-      </div>
-    </div>
+      {/* Canvases Tab */}
+      <button
+        type="button"
+        role="tab"
+        onClick={() => onSelectTab('canvases')}
+        className={`flex-1 h-full flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+          activeTab === 'canvases'
+            ? 'text-[var(--phone-ink)] font-medium'
+            : 'text-[var(--phone-mute)] hover:text-[var(--phone-ink)]'
+        }`}
+        aria-selected={activeTab === 'canvases'}
+      >
+        <Palette className="w-6 h-6 stroke-[1.8]" />
+        <span className="text-[11px] leading-tight">Canvases</span>
+      </button>
+
+      {/* Explore Tab */}
+      <button
+        type="button"
+        role="tab"
+        onClick={() => onSelectTab('explore')}
+        className={`flex-1 h-full flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+          activeTab === 'explore'
+            ? 'text-[var(--phone-ink)] font-medium'
+            : 'text-[var(--phone-mute)] hover:text-[var(--phone-ink)]'
+        }`}
+        aria-selected={activeTab === 'explore'}
+      >
+        <Compass className="w-6 h-6 stroke-[1.8]" />
+        <span className="text-[11px] leading-tight">Explore</span>
+      </button>
+    </nav>
   );
 };
-
 export default AppTabBar;
