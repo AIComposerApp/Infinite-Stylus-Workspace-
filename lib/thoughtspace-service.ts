@@ -19,6 +19,8 @@ export interface SharedThoughtDocument {
   category: string;
   duration: string;
   authorAnonymousId: string;
+  authorName?: string;
+  remixCount?: number;
   expiresAt: number;
   createdAt: number;
   reactionCount: number;

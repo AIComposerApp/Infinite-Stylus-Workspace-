@@ -71,14 +71,18 @@ const AccordionCanvasThumbnail: React.FC<{ thought: SharedThoughtDocument }> = (
     }
 
     const b = parsed.bounds;
-    const bw = Math.max(150, b.maxX - b.minX);
-    const bh = Math.max(120, b.maxY - b.minY);
-    const scale = Math.min((width * 0.85) / bw, (height * 0.8) / bh, 0.88);
-    const offsetX = width / 2 - ((b.minX + b.maxX) / 2) * scale;
-    const offsetY = height / 2 - ((b.minY + b.maxY) / 2) * scale;
+    const bw = Math.max(100, b.maxX - b.minX);
+    const bh = Math.max(80, b.maxY - b.minY);
+    const padding = 24;
+    const scale = Math.min((width - padding * 2) / bw, (height - padding * 2) / bh);
+    const clampedScale = Math.max(0.65, Math.min(1.35, scale));
+    const centerX = (b.minX + b.maxX) / 2;
+    const centerY = (b.minY + b.maxY) / 2;
+    const offsetX = width / 2 - centerX * clampedScale;
+    const offsetY = height / 2 - centerY * clampedScale;
 
     ctx.translate(offsetX, offsetY);
-    ctx.scale(scale, scale);
+    ctx.scale(clampedScale, clampedScale);
 
     for (const stroke of parsed.strokes) {
       drawSmoothStroke(ctx, stroke);
@@ -231,11 +235,23 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
     await sendThoughtReaction(thought.id, 'resonate');
   };
 
-  const authorInit = thought.authorAnonymousId
-    ? thought.authorAnonymousId.slice(0, 2).toUpperCase()
-    : 'AN';
+  const displayName =
+    thought.authorName ||
+    (thought.authorAnonymousId
+      ? thought.authorAnonymousId.replace(/_/g, ' ')
+      : 'Anonymous');
 
-  const timeString = getRelativeTime(thought.createdAt);
+  const authorInit = displayName
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  const [timeString] = useState<string>(() => getRelativeTime(thought.createdAt));
+  const [isRecentlyActive] = useState<boolean>(() =>
+    thought.createdAt ? Date.now() - thought.createdAt < 2 * 3600 * 1000 : false
+  );
 
   return (
     <div
@@ -254,9 +270,9 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
         }}
         className="rounded-2xl bg-neutral-100 border border-neutral-200/90 flex items-center justify-between px-6 pointer-events-none"
       >
-        <div className="flex items-center gap-2 text-xs font-semibold text-neutral-400">
+        <div className="flex items-center gap-2 text-xs font-semibold text-neutral-500">
           <Bookmark className="w-4 h-4" />
-          <span>Save Thought</span>
+          <span>Save Canvas</span>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold text-rose-500">
           <span>Dismiss</span>
@@ -282,7 +298,7 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
           opacity: isDismissing ? 0 : 1,
           touchAction: 'pan-y',
         }}
-        className="bg-white rounded-2xl border border-neutral-200/90 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-visible"
+        className="bg-white rounded-2xl border border-neutral-200/90 shadow-xs hover:shadow-md transition-all cursor-pointer overflow-visible"
       >
         {/* Fixed Top Header */}
         <div
@@ -291,61 +307,86 @@ const SwipableAccordionCard: React.FC<SwipableCardProps> = ({
               onToggleExpand();
             }
           }}
-          className="p-4 sm:p-5 flex items-center justify-between gap-3"
+          className="p-4 sm:p-5 flex flex-col gap-2.5"
         >
-          {/* Avatar & User Info */}
-          <div className="flex items-center gap-3.5 min-w-0">
-            {/* Polished Author Avatar with glowing rank ring */}
-            <div className="relative shrink-0">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-neutral-100 to-neutral-200 border border-neutral-300 flex items-center justify-center font-bold text-xs text-neutral-800 shadow-xs">
-                {authorInit}
+          <div className="flex items-start justify-between gap-3">
+            {/* Avatar & User Info */}
+            <div className="flex items-center gap-3.5 min-w-0">
+              {/* Polished Author Avatar with glowing rank ring */}
+              <div className="relative shrink-0">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-neutral-100 to-neutral-200 border border-neutral-300 flex items-center justify-center font-bold text-xs text-neutral-800 shadow-xs">
+                  {authorInit}
+                </div>
+                {isRecentlyActive && (
+                  <span
+                    className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white shadow-xs"
+                    title="Active recently"
+                  />
+                )}
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white shadow-xs" />
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-neutral-900 truncate leading-snug">
+                    {thought.title}
+                  </h4>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
+                  <span className="font-semibold text-neutral-800 text-[12px]">
+                    {displayName}
+                  </span>
+                  <span>•</span>
+                  <span className="font-mono text-[11px] text-neutral-600 font-medium">
+                    {thought.category}
+                  </span>
+                  <span>•</span>
+                  <span className="text-[11px] text-neutral-500">{timeString}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-bold text-neutral-900 truncate leading-snug">
-                  {thought.title}
-                </h4>
+            {/* Right Controls: Resonate Heart & Accordion Chevron */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleLikeClick}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-50 hover:bg-rose-50 text-neutral-700 hover:text-rose-600 border border-neutral-200/80 transition-colors text-xs font-semibold"
+                title="Resonate"
+              >
+                <Heart
+                  className={`w-3.5 h-3.5 ${
+                    hasLiked ? 'text-rose-500 fill-rose-500' : 'text-neutral-500'
+                  }`}
+                />
+                <span>{likeCount}</span>
+              </button>
+
+              {/* Accordion Chevron: rotates 180deg with 0.5s cubic-bezier(0.65, 0, 0, 1) */}
+              <div
+                style={{
+                  transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.5s cubic-bezier(0.65, 0, 0, 1)',
+                }}
+                className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-600 hover:text-neutral-900 transition-colors"
+              >
+                <ChevronDown className="w-4 h-4" />
               </div>
-              <div className="flex items-center gap-2 text-xs text-neutral-500 mt-0.5">
-                <span className="font-mono text-[11px] text-neutral-600 font-medium">
-                  {thought.category}
-                </span>
+            </div>
+          </div>
+
+          {/* Thought Excerpt & Stats in Collapsed State */}
+          {!isExpanded && (
+            <div className="flex items-center justify-between gap-4 pt-1 pl-[52px]">
+              <p className="text-xs text-neutral-600 line-clamp-1 flex-1 font-normal">
+                {thought.summary}
+              </p>
+              <div className="shrink-0 text-[11px] font-medium text-neutral-500 flex items-center gap-1.5">
+                <span>{thought.reactionCount || 0} resonated</span>
                 <span>•</span>
-                <span className="text-[11px] text-neutral-400">{timeString}</span>
+                <span>{thought.remixCount || 0} remixes</span>
               </div>
             </div>
-          </div>
-
-          {/* Right Controls: Resonate Heart & Accordion Chevron */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleLikeClick}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-50 hover:bg-rose-50 text-neutral-600 hover:text-rose-600 border border-neutral-200/80 transition-colors text-xs font-semibold"
-              title="Resonate"
-            >
-              <Heart
-                className={`w-3.5 h-3.5 ${
-                  hasLiked ? 'text-rose-500 fill-rose-500' : 'text-neutral-500'
-                }`}
-              />
-              <span>{likeCount}</span>
-            </button>
-
-            {/* Accordion Chevron: rotates 180deg with 0.5s cubic-bezier(0.65, 0, 0, 1) */}
-            <div
-              style={{
-                transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                transition: 'transform 0.5s cubic-bezier(0.65, 0, 0, 1)',
-              }}
-              className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-500 hover:text-neutral-900 transition-colors"
-            >
-              <ChevronDown className="w-4 h-4" />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Fluid Height Morphing via CSS Grid (Zero-Jitter Accordion Body Drawer) */}

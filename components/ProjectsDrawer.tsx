@@ -257,21 +257,58 @@ const SwipeableProjectItem: React.FC<SwipeableProjectItemProps> = ({
               <Clock className="w-2.5 h-2.5" />
               {dateStr}
             </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect();
-              }}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                isActive
-                  ? 'bg-neutral-900 text-white'
-                  : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
-              }`}
-            >
-              <span>{isActive ? 'Active' : 'Open'}</span>
-              <ChevronRight className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-1">
+              {/* Contextual Pin Button for desktop & mouse users */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPin();
+                  onNotify(project.isPinned ? 'Unpinned' : 'Pinned to top');
+                }}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  project.isPinned
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : 'text-neutral-400 hover:text-neutral-800 hover:bg-black/5'
+                }`}
+                title={project.isPinned ? 'Unpin note' : 'Pin note to top'}
+              >
+                <Pin className={`w-3.5 h-3.5 ${project.isPinned ? 'fill-amber-500' : ''}`} />
+              </button>
+
+              {/* Contextual Delete Button for desktop & mouse users */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsRemoved(true);
+                  setTimeout(() => {
+                    onDelete();
+                    onNotify('Note deleted');
+                  }, 150);
+                }}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                title="Delete note"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect();
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ml-0.5 ${
+                  isActive
+                    ? 'bg-neutral-900 text-white'
+                    : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                }`}
+              >
+                <span>{isActive ? 'Active' : 'Open'}</span>
+                <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -416,15 +453,15 @@ export const ProjectsDrawer: React.FC<ProjectsDrawerProps> = ({
               </div>
             </div>
 
-            {/* Gesture Helper Hint */}
+            {/* Cross-Platform Interaction Helper Hint */}
             <div
               onPointerDown={(e) => {
                 dragControls.start(e);
               }}
-              className="px-4 py-2 bg-neutral-100/60 text-[11px] text-neutral-500 flex items-center justify-between cursor-grab select-none"
+              className="px-4 py-2 bg-neutral-100/70 text-[11px] text-neutral-500 flex items-center justify-between cursor-grab select-none border-b border-black/[0.04]"
             >
-              <span>Swipe item right to <b>delete</b></span>
-              <span>Swipe item left to <b>pin</b></span>
+              <span>Desktop: Click Pin/Delete buttons</span>
+              <span>Touch: Swipe to Pin / Delete</span>
             </div>
 
             {/* Notes List */}

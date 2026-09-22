@@ -1,13 +1,12 @@
 {
-  "name": "ai-studio-applet",
+  "name": "infinite-stylus-canvas",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack -p 3000",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "clean": "next clean"
+    "start": "next start -p 3000",
+    "lint": "next lint"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

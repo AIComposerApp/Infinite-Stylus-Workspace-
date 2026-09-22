@@ -1,41 +1,37 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import Image from 'next/image';
-import { motion, AnimatePresence, useDragControls } from 'motion/react';
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
-  BookmarkCheck,
-  LayoutGrid,
-  Plus,
   PenTool,
-  PencilLine,
   Highlighter,
   Eraser,
   LassoSelect,
   Undo2,
   Redo2,
-  Share2,
-  Check,
-  GripHorizontal,
-  FileText,
-  Image as ImageIcon,
+  Plus,
+  X,
   ImagePlus,
   Shapes,
+  Type,
+  ListTodo,
+  StickyNote,
+  FolderPlus,
+  FolderOpen,
+  Share2,
+  Sparkles,
+  Download,
+  FileDown,
+  FileJson,
+  Crosshair,
   Square,
   Circle,
   Triangle,
-  StickyNote,
-  MoveRight,
-  Minus,
-  Sparkles,
-  Download,
-  Star,
   Diamond,
-  Hand,
-  ListTodo,
-  Type,
+  Star,
+  Minus,
   Workflow,
-  Globe2,
+  Check,
 } from 'lucide-react';
 import { StylusToolType, ShapeType } from '@/types/canvas';
 
@@ -67,18 +63,33 @@ interface LiquidBottomDockProps {
   onAddChecklist: () => void;
 }
 
-const INK_COLORS = [
-  { label: 'Ink Black', value: '#1E1E1E' },
-  { label: 'Charcoal', value: '#4A5568' },
-  { label: 'Midnight Blue', value: '#1E3A8A' },
-  { label: 'Crimson Red', value: '#991B1B' },
-  { label: 'Forest Green', value: '#166534' },
-  { label: 'Warm Amber', value: '#D97706' },
-  { label: 'Highlighter Yellow', value: '#FACC15' },
+type ActivePopover = 'none' | 'tool' | 'color';
+
+// Curated stationery palette matching the prototype
+const PALETTE = [
+  { key: 'ink', label: 'Ink', color: '#141414' },
+  { key: 'slate', label: 'Slate', color: '#7B8CB0' },
+  { key: 'amber', label: 'Amber', color: '#E08A1E' },
+  { key: 'sage', label: 'Sage', color: '#7FA08A' },
+  { key: 'rose', label: 'Rose', color: '#D4537E' },
+  { key: 'blue', label: 'Apple Blue', color: '#007AFF' },
+  { key: 'yellow', label: 'Highlighter', color: '#FACC15' },
 ];
 
-// Single Item Width = 38px button + 6px gap = 44px
-const ITEM_STEP = 44;
+// Curated preset sizes matching the prototype
+const TOOL_SIZES: Record<string, { name: string; presets: number[] }> = {
+  pen: { name: 'Pen', presets: [1.5, 2.5, 4.5] },
+  highlighter: { name: 'Highlighter', presets: [10, 16, 26] },
+  eraser: { name: 'Eraser', presets: [10, 18, 32] },
+};
+
+const STICKY_NOTES = [
+  { label: 'Warm Cream', bg: '#FEF08A', border: '#FACC15' },
+  { label: 'Rose Blush', bg: '#FBCFE8', border: '#F472B6' },
+  { label: 'Mint Paper', bg: '#BBF7D0', border: '#4ADE80' },
+  { label: 'Sky Mist', bg: '#BAE6FD', border: '#38BDF8' },
+  { label: 'Lavender', bg: '#E9D5FF', border: '#C084FC' },
+];
 
 export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   currentTool,
@@ -88,7 +99,6 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   strokeWidth,
   onChangeStrokeWidth,
   onSave,
-  isSaving,
   onOpenProjects,
   onNewProject,
   onUndo,
@@ -101,1224 +111,683 @@ export const LiquidBottomDock: React.FC<LiquidBottomDockProps> = ({
   onShareThoughtDump,
   onTriggerAssistant,
   isAssistantThinking,
-  isConversationalActive = false,
-  isOffline = false,
   onImportImages,
   onAddShape,
   onAddChecklist,
 }) => {
-  const [showColorPicker, setShowColorPicker] = useState<boolean>(false);
-  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
-  const [showShapesMenu, setShowShapesMenu] = useState<boolean>(false);
-  const [justSaved, setJustSaved] = useState<boolean>(false);
-  const [isDockOpen, setIsDockOpen] = useState<boolean>(false);
+  const [activePopover, setActivePopover] = useState<ActivePopover>('none');
+  const [popoverTool, setPopoverTool] = useState<'pen' | 'highlighter' | 'eraser'>('pen');
+  const [isSheetOpen, setIsSheetOpen] = useState<boolean>(false);
+  const [showShapePicker, setShowShapePicker] = useState<boolean>(false);
+  const [showNotePicker, setShowNotePicker] = useState<boolean>(false);
+  const [highlighterOpacity, setHighlighterOpacity] = useState<number>(35);
+  const [sheetDragY, setSheetDragY] = useState<number>(0);
+  const [isDraggingSheet, setIsDraggingSheet] = useState<boolean>(false);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragStartYRef = useRef<number>(0);
 
-  // Framer Motion controls for repositioning whole dock via grip only
-  const dockDragControls = useDragControls();
-
-  // State for the finger-dragged infinite tools ribbon (Right side: drawing tools)
-  const [isHolding, setIsHolding] = useState<boolean>(false);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-
-  // State for the finger-dragged infinite tools ribbon (Left side: creation & workspace tools)
-  const [leftIsHolding, setLeftIsHolding] = useState<boolean>(false);
-  const [leftIsDragging, setLeftIsDragging] = useState<boolean>(false);
-
-  // Left tools definitions (Creation, workspace, library, shapes, checklist, and quick undo/redo)
-  const leftToolDefinitions = [
-    { id: 'save', label: 'Save', type: 'save' },
-    { id: 'projects', label: 'Library', type: 'projects' },
-    { id: 'new', label: 'New Board', type: 'new' },
-    { id: 'image', label: 'Import Image', type: 'image' },
-    { id: 'shapes', label: 'Shapes & Sticky Notes', type: 'shapes' },
-    { id: 'checklist', label: 'Checklist Card', type: 'checklist' },
-    { id: 'undo', label: 'Undo', type: 'undo' },
-    { id: 'redo', label: 'Redo', type: 'redo' },
-  ];
-
-  // Right tools definitions (Stylus drawing tools, text, connector, colors, undo/redo, export, assistant)
-  const toolDefinitions = [
-    { id: 'pan', label: 'Move & Type', type: 'tool', tool: 'pan' as StylusToolType },
-    { id: 'select', label: 'Select & Copy', type: 'tool', tool: 'select' as StylusToolType },
-    { id: 'text', label: 'Type Text (T)', type: 'tool', tool: 'text' as StylusToolType },
-    { id: 'connector', label: 'Flowchart Connector (C)', type: 'tool', tool: 'connector' as StylusToolType },
-    { id: 'pen', label: 'Fountain Pen', type: 'tool', tool: 'pen' as StylusToolType },
-    { id: 'pencil', label: 'Graphite Pencil', type: 'tool', tool: 'pencil' as StylusToolType },
-    { id: 'highlighter', label: 'Highlighter', type: 'tool', tool: 'highlighter' as StylusToolType },
-    { id: 'eraser', label: 'Eraser', type: 'tool', tool: 'eraser' as StylusToolType },
-    { id: 'color', label: 'Ink Color & Size', type: 'color' },
-    { id: 'undo', label: 'Undo', type: 'undo' },
-    { id: 'redo', label: 'Redo', type: 'redo' },
-    { id: 'export', label: 'Export Board', type: 'export' },
-    { id: 'assistant', label: 'AI Assistant', type: 'assistant' },
-  ];
-
-  // Loop width calculations
-  const oneLoopWidth = toolDefinitions.length * ITEM_STEP; // 440px
-  const [translateX, setTranslateX] = useState<number>(-oneLoopWidth);
-
-  const leftOneLoopWidth = leftToolDefinitions.length * ITEM_STEP; // 352px
-  const [leftTranslateX, setLeftTranslateX] = useState<number>(-leftOneLoopWidth);
-
-  // Right ribbon drag refs
-  const pointerDownPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const lastPointerXRef = useRef<number>(0);
-  const lastTimeRef = useRef<number>(0);
-  const totalDragDistRef = useRef<number>(0);
-  const velocityRef = useRef<number>(0);
-  const momentumAnimRef = useRef<number | null>(null);
-
-  // Left ribbon drag refs
-  const leftPointerDownPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const leftLastPointerXRef = useRef<number>(0);
-  const leftLastTimeRef = useRef<number>(0);
-  const leftTotalDragDistRef = useRef<number>(0);
-  const leftVelocityRef = useRef<number>(0);
-  const leftMomentumAnimRef = useRef<number | null>(null);
-
-  const handleSaveClick = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    onSave();
-    setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 1800);
-  };
-
-  // Cancel any running inertia animation on right ribbon
-  const stopMomentum = useCallback(() => {
-    if (momentumAnimRef.current !== null) {
-      cancelAnimationFrame(momentumAnimRef.current);
-      momentumAnimRef.current = null;
-    }
+  // Close popovers and sheets on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActivePopover('none');
+        setIsSheetOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Cancel any running inertia animation on left ribbon
-  const stopLeftMomentum = useCallback(() => {
-    if (leftMomentumAnimRef.current !== null) {
-      cancelAnimationFrame(leftMomentumAnimRef.current);
-      leftMomentumAnimRef.current = null;
-    }
-  }, []);
-
-  // Wrap translateX modulo oneLoopWidth seamlessly
-  const wrapTranslateX = useCallback(
-    (x: number): number => {
-      let current = x;
-      while (current < -oneLoopWidth * 2) {
-        current += oneLoopWidth;
-      }
-      while (current > 0) {
-        current -= oneLoopWidth;
-      }
-      return current;
-    },
-    [oneLoopWidth]
-  );
-
-  // Wrap leftTranslateX modulo leftOneLoopWidth seamlessly
-  const wrapLeftTranslateX = useCallback(
-    (x: number): number => {
-      let current = x;
-      while (current < -leftOneLoopWidth * 2) {
-        current += leftOneLoopWidth;
-      }
-      while (current > 0) {
-        current -= leftOneLoopWidth;
-      }
-      return current;
-    },
-    [leftOneLoopWidth]
-  );
-
-  // Pointer Down on Right Tools Ribbon
-  const handleRibbonPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    stopMomentum();
-    setIsHolding(true);
-    setIsDragging(false);
-    pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
-    lastPointerXRef.current = e.clientX;
-    lastTimeRef.current = Date.now();
-    totalDragDistRef.current = 0;
-    velocityRef.current = 0;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-
-  // Pointer Move on Right Tools Ribbon
-  const handleRibbonPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isHolding) return;
-
-    const now = Date.now();
-    const dt = Math.max(1, now - lastTimeRef.current);
-    const dx = e.clientX - lastPointerXRef.current;
-
-    totalDragDistRef.current += Math.abs(dx);
-    if (totalDragDistRef.current > 5) {
-      setIsDragging(true);
-      setShowColorPicker(false);
-      setShowExportMenu(false);
-      setShowShapesMenu(false);
-    }
-
-    velocityRef.current = dx / dt;
-    lastPointerXRef.current = e.clientX;
-    lastTimeRef.current = now;
-
-    setTranslateX((prev) => wrapTranslateX(prev + dx));
-  };
-
-  // Pointer Up on Right Tools Ribbon
-  const handleRibbonPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isHolding) return;
-    setIsHolding(false);
-
-    try {
-      (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-    } catch {
-      // Ignored
-    }
-
-    if (totalDragDistRef.current > 5 && Math.abs(velocityRef.current) > 0.1) {
-      let vel = velocityRef.current * 16;
-      const glide = () => {
-        if (Math.abs(vel) > 0.25) {
-          setTranslateX((prev) => wrapTranslateX(prev + vel));
-          vel *= 0.92;
-          momentumAnimRef.current = requestAnimationFrame(glide);
+  // Handle clicking a tool
+  const handleToolClick = (tool: StylusToolType) => {
+    // If the tool is already selected, toggle its size options popover
+    if (currentTool === tool) {
+      if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
+        if (activePopover === 'tool' && popoverTool === tool) {
+          setActivePopover('none');
         } else {
-          setIsDragging(false);
+          setPopoverTool(tool);
+          setActivePopover('tool');
         }
-      };
-      momentumAnimRef.current = requestAnimationFrame(glide);
-    } else {
-      setIsDragging(false);
-    }
-  };
-
-  // Wheel on Right Ribbon
-  const handleRibbonWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    stopMomentum();
-    const delta = -(e.deltaX || (e.shiftKey ? e.deltaY : 0));
-    if (Math.abs(delta) > 0) {
-      setTranslateX((prev) => wrapTranslateX(prev + delta * 0.8));
-    }
-  };
-
-  // Pointer Down on Left Tools Ribbon
-  const handleLeftRibbonPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    stopLeftMomentum();
-    setLeftIsHolding(true);
-    setLeftIsDragging(false);
-    leftPointerDownPosRef.current = { x: e.clientX, y: e.clientY };
-    leftLastPointerXRef.current = e.clientX;
-    leftLastTimeRef.current = Date.now();
-    leftTotalDragDistRef.current = 0;
-    leftVelocityRef.current = 0;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-
-  // Pointer Move on Left Tools Ribbon
-  const handleLeftRibbonPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!leftIsHolding) return;
-
-    const now = Date.now();
-    const dt = Math.max(1, now - leftLastTimeRef.current);
-    const dx = e.clientX - leftLastPointerXRef.current;
-
-    leftTotalDragDistRef.current += Math.abs(dx);
-    if (leftTotalDragDistRef.current > 5) {
-      setLeftIsDragging(true);
-      setShowColorPicker(false);
-      setShowExportMenu(false);
-      setShowShapesMenu(false);
-    }
-
-    leftVelocityRef.current = dx / dt;
-    leftLastPointerXRef.current = e.clientX;
-    leftLastTimeRef.current = now;
-
-    setLeftTranslateX((prev) => wrapLeftTranslateX(prev + dx));
-  };
-
-  // Pointer Up on Left Tools Ribbon
-  const handleLeftRibbonPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!leftIsHolding) return;
-    setLeftIsHolding(false);
-
-    try {
-      (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-    } catch {
-      // Ignored
-    }
-
-    if (leftTotalDragDistRef.current > 5 && Math.abs(leftVelocityRef.current) > 0.1) {
-      let vel = leftVelocityRef.current * 16;
-      const glide = () => {
-        if (Math.abs(vel) > 0.25) {
-          setLeftTranslateX((prev) => wrapLeftTranslateX(prev + vel));
-          vel *= 0.92;
-          leftMomentumAnimRef.current = requestAnimationFrame(glide);
-        } else {
-          setLeftIsDragging(false);
-        }
-      };
-      leftMomentumAnimRef.current = requestAnimationFrame(glide);
-    } else {
-      setLeftIsDragging(false);
-    }
-  };
-
-  // Wheel on Left Ribbon
-  const handleLeftRibbonWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    stopLeftMomentum();
-    const delta = -(e.deltaX || (e.shiftKey ? e.deltaY : 0));
-    if (Math.abs(delta) > 0) {
-      setLeftTranslateX((prev) => wrapLeftTranslateX(prev + delta * 0.8));
-    }
-  };
-
-  // Execute left tool action only if user wasn't dragging
-  const handleLeftItemClick = (type: string) => {
-    if (leftTotalDragDistRef.current > 6) return;
-
-    if (type === 'save') {
-      handleSaveClick();
-    } else if (type === 'projects') {
-      onOpenProjects();
-    } else if (type === 'new') {
-      onNewProject();
-    } else if (type === 'image') {
-      fileInputRef.current?.click();
-    } else if (type === 'shapes') {
-      setShowShapesMenu((prev) => !prev);
-      setShowColorPicker(false);
-      setShowExportMenu(false);
-    } else if (type === 'checklist') {
-      onAddChecklist();
-      setShowShapesMenu(false);
-    } else if (type === 'undo') {
-      if (canUndo) onUndo();
-    } else if (type === 'redo') {
-      if (canRedo) onRedo();
-    }
-  };
-
-  // Execute tool action only if not dragging
-  const handleItemClick = (type: string, toolName?: StylusToolType) => {
-    if (totalDragDistRef.current > 6) {
-      // Finger was dragging/swiping, do not trigger item
+      }
       return;
     }
 
-    if (type === 'tool' && toolName) {
-      if (currentTool === toolName && toolName !== 'pan') {
-        onSelectTool('pan');
-      } else {
-        onSelectTool(toolName);
-      }
-    } else if (type === 'color') {
-      setShowColorPicker((prev) => !prev);
-      setShowExportMenu(false);
-    } else if (type === 'undo') {
-      if (canUndo) onUndo();
-    } else if (type === 'redo') {
-      if (canRedo) onRedo();
-    } else if (type === 'export') {
-      setShowExportMenu((prev) => !prev);
-      setShowColorPicker(false);
-    } else if (type === 'assistant') {
-      onTriggerAssistant();
-    }
+    // Otherwise select the tool and close popovers
+    onSelectTool(tool);
+    setActivePopover('none');
   };
 
-  // Render individual tool button
-  const renderToolButton = (item: (typeof toolDefinitions)[0], keySuffix: string | number) => {
-    const key = `${item.id}-${keySuffix}`;
-    const isSelected = item.type === 'tool' && currentTool === item.tool;
-
-    if (item.id === 'pan') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'pan')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Move & Type Anywhere (1-Finger Drag)"
-        >
-          <Hand className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'pen') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'pen')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Fountain Pen"
-        >
-          <PenTool className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'pencil') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'pencil')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Graphite Pencil"
-        >
-          <PencilLine className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'highlighter') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'highlighter')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-yellow-200 text-yellow-900 font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Highlighter"
-        >
-          <Highlighter className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'eraser') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'eraser')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Eraser"
-        >
-          <Eraser className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'select') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'select')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Select & Move (V)"
-        >
-          <LassoSelect className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'text') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'text')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-black/15 text-black font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Type Text Anywhere (T) • Double-click canvas"
-        >
-          <Type className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'connector') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('tool', 'connector')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            isSelected
-              ? 'bg-blue-100 text-blue-800 font-semibold shadow-xs'
-              : 'text-[#444444] hover:bg-black/5 hover:text-black'
-          }`}
-          title="Curvy Flowchart Connector (C)"
-        >
-          <Workflow className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'color') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('color')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#444444] hover:bg-black/5 hover:text-black transition-all shrink-0 select-none"
-          title="Pen Color & Stroke Width"
-        >
-          <div
-            className="w-4 h-4 rounded-full border border-black/20 shadow-xs ring-1 ring-black/10"
-            style={{ backgroundColor: currentColor }}
-          />
-        </button>
-      );
-    }
-
-    if (item.id === 'undo') {
-      return (
-        <button
-          key={key}
-          disabled={!canUndo}
-          onClick={() => handleItemClick('undo')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            canUndo
-              ? 'text-[#444444] hover:bg-black/5 hover:text-black active:scale-95'
-              : 'text-neutral-300 cursor-not-allowed'
-          }`}
-          title="Undo"
-        >
-          <Undo2 className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'redo') {
-      return (
-        <button
-          key={key}
-          disabled={!canRedo}
-          onClick={() => handleItemClick('redo')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            canRedo
-              ? 'text-[#444444] hover:bg-black/5 hover:text-black active:scale-95'
-              : 'text-neutral-300 cursor-not-allowed'
-          }`}
-          title="Redo"
-        >
-          <Redo2 className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'export') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('export')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#444444] hover:bg-black/5 hover:text-black transition-all shrink-0 select-none"
-          title="Export Board to PDF or Image"
-        >
-          <Share2 className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'assistant') {
-      return (
-        <button
-          key={key}
-          onClick={() => handleItemClick('assistant')}
-          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all active:scale-95 shrink-0 select-none bg-black hover:bg-neutral-800 ${
-            isAssistantThinking ? 'ring-2 ring-neutral-400 animate-pulse' : ''
-          }`}
-          title="AI Assistant (Organic handwriting answers overlapping your text)"
-        >
-          <Image
-            src="/icons/ai-assistant-white-64.png"
-            alt="AI Assistant"
-            width={22}
-            height={22}
-            referrerPolicy="no-referrer"
-            className="w-[22px] h-[22px] object-contain pointer-events-none select-none"
-            priority
-          />
-        </button>
-      );
-    }
-
-    return null;
+  // Toggle Color Popover
+  const handleColorButtonClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsSheetOpen(false);
+    setActivePopover((prev) => (prev === 'color' ? 'none' : 'color'));
   };
 
-  // Render buttons on the Left infinite looping ribbon
-  const renderLeftToolButton = (item: (typeof leftToolDefinitions)[0], keySuffix: string | number) => {
-    const key = `left-${item.id}-${keySuffix}`;
-
-    if (item.id === 'save') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-save"
-          onClick={handleSaveClick}
-          className={`relative flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            justSaved
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-[#1E1E1E] text-white hover:bg-black shadow-xs active:scale-95'
-          }`}
-          title="Save Notes & Board (Also Auto-Saves)"
-        >
-          {justSaved ? (
-            <Check className="w-4 h-4 stroke-[2.5]" />
-          ) : isSaving ? (
-            <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-          ) : (
-            <BookmarkCheck className="w-4 h-4" strokeWidth={1.8} />
-          )}
-          <span
-            suppressHydrationWarning
-            className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-white ${
-              isOffline ? 'bg-amber-500' : 'bg-emerald-500'
-            }`}
-            title={isOffline ? 'Working Offline - Safe on device' : 'Saved Locally'}
-          />
-        </button>
-      );
-    }
-
-    if (item.id === 'projects') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-projects"
-          onClick={() => handleLeftItemClick('projects')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#333333] hover:bg-black/5 hover:text-black transition-colors shrink-0 select-none active:scale-95"
-          title="Notes & Canvases Library"
-        >
-          <LayoutGrid className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'new') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-new"
-          onClick={() => handleLeftItemClick('new')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#333333] hover:bg-black/5 hover:text-black transition-colors shrink-0 select-none active:scale-95"
-          title="New Blank Board"
-        >
-          <Plus className="w-4 h-4" strokeWidth={2.4} />
-        </button>
-      );
-    }
-
-    if (item.id === 'image') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-import-image"
-          onClick={() => handleLeftItemClick('image')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#18181B] hover:bg-black/5 transition-colors shrink-0 select-none active:scale-95"
-          title="Import Image to Canvas (PNG, JPG, WebP, SVG)"
-        >
-          <ImagePlus className="w-4 h-4 text-[#18181B]" strokeWidth={1.9} />
-        </button>
-      );
-    }
-
-    if (item.id === 'shapes') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-shapes"
-          onClick={() => handleLeftItemClick('shapes')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-colors shrink-0 select-none active:scale-95 ${
-            showShapesMenu
-              ? 'bg-black/10 text-black shadow-xs font-semibold'
-              : 'text-[#18181B] hover:bg-black/5'
-          }`}
-          title="Add Shapes, Lines, Arrows & Sticky Notes"
-        >
-          <Shapes className="w-4 h-4 text-[#18181B]" strokeWidth={1.9} />
-        </button>
-      );
-    }
-
-    if (item.id === 'checklist') {
-      return (
-        <button
-          key={key}
-          id="btn-dock-checklist"
-          onClick={() => handleLeftItemClick('checklist')}
-          className="flex items-center justify-center w-[38px] h-[38px] rounded-full text-[#18181B] hover:bg-black/5 transition-colors shrink-0 select-none active:scale-95"
-          title="Add Checklist (Tick items, strike out & hide completed)"
-        >
-          <ListTodo className="w-4 h-4 text-[#18181B]" strokeWidth={1.9} />
-        </button>
-      );
-    }
-
-    if (item.id === 'undo') {
-      return (
-        <button
-          key={key}
-          disabled={!canUndo}
-          onClick={() => handleLeftItemClick('undo')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            canUndo
-              ? 'text-[#444444] hover:bg-black/5 hover:text-black active:scale-95'
-              : 'text-neutral-300 cursor-not-allowed'
-          }`}
-          title="Undo"
-        >
-          <Undo2 className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    if (item.id === 'redo') {
-      return (
-        <button
-          key={key}
-          disabled={!canRedo}
-          onClick={() => handleLeftItemClick('redo')}
-          className={`flex items-center justify-center w-[38px] h-[38px] rounded-full transition-all shrink-0 select-none ${
-            canRedo
-              ? 'text-[#444444] hover:bg-black/5 hover:text-black active:scale-95'
-              : 'text-neutral-300 cursor-not-allowed'
-          }`}
-          title="Redo"
-        >
-          <Redo2 className="w-4 h-4" strokeWidth={1.8} />
-        </button>
-      );
-    }
-
-    return null;
+  // Toggle Sheet
+  const handlePlusClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActivePopover('none');
+    setIsSheetOpen((prev) => !prev);
+    setShowShapePicker(false);
+    setShowNotePicker(false);
   };
 
-  // Clean up animations on unmount
-  useEffect(() => {
-    return () => {
-      stopMomentum();
-      stopLeftMomentum();
-    };
-  }, [stopMomentum, stopLeftMomentum]);
+  const closeAll = () => {
+    setActivePopover('none');
+    setIsSheetOpen(false);
+    setShowShapePicker(false);
+    setShowNotePicker(false);
+  };
+
+  // Touch drag for bottom sheet grab bar
+  const handleGrabPointerDown = (e: React.PointerEvent) => {
+    setIsDraggingSheet(true);
+    dragStartYRef.current = e.clientY;
+    setSheetDragY(0);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleGrabPointerMove = (e: React.PointerEvent) => {
+    if (!isDraggingSheet) return;
+    const dy = Math.max(0, e.clientY - dragStartYRef.current);
+    setSheetDragY(dy);
+  };
+
+  const handleGrabPointerUp = () => {
+    if (!isDraggingSheet) return;
+    setIsDraggingSheet(false);
+    if (sheetDragY > 80) {
+      setIsSheetOpen(false);
+    }
+    setSheetDragY(0);
+  };
 
   return (
-    <div className="fixed bottom-5 left-0 right-0 z-30 flex justify-center items-end pointer-events-none px-2 select-none">
-      {/* Dock wrapper. Dragging whole dock only activates if user drags the left grip handle */}
-      <motion.div
-        id="liquid-dock-wrapper"
-        drag
-        dragListener={false}
-        dragControls={dockDragControls}
-        dragConstraints={{ left: -360, right: 360, top: -650, bottom: 20 }}
-        dragElastic={0.08}
-        dragMomentum={false}
-        className="pointer-events-auto relative flex items-center justify-center max-w-[98vw]"
-      >
-        {/* Hidden File Input for Image Import */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(e) => {
-            if (e.target.files && e.target.files.length > 0) {
-              onImportImages(e.target.files);
-              e.target.value = '';
-            }
-          }}
-          className="hidden"
-        />
+    <>
+      {/* Hidden File Input for Image Import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            onImportImages(e.target.files);
+            e.target.value = '';
+          }
+        }}
+        className="hidden"
+      />
 
-        {/* Floating Dock Navigation Container with Space-Claiming Physics */}
+      {/* Global Scrim Backdrop when Bottom Sheet is Open */}
+      <div
+        onClick={closeAll}
+        className={`fixed inset-0 z-50 bg-black/28 transition-opacity duration-300 pointer-events-none ${
+          isSheetOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0'
+        }`}
+      />
+
+      {/* Click-away detector for popovers */}
+      {activePopover !== 'none' && (
         <div
-          id="liquid-dock-container"
-          className={`relative flex items-center justify-between gap-1.5 w-[96vw] max-w-[740px] ${
-            isDockOpen ? 'is-open' : ''
-          }`}
-        >
-          {/* 1. Adjacent Icon / Logo: .nav_logo_wrap */}
-          <div
-            id="nav-logo-wrap"
-            onClick={(e) => {
-              e.stopPropagation();
-              window.dispatchEvent(new CustomEvent('recenter-canvas'));
-            }}
-            style={{
-              transform: isDockOpen ? 'scale(0)' : 'scale(1)',
-              opacity: isDockOpen ? 0 : 1,
-              pointerEvents: isDockOpen ? 'none' : 'auto',
-              transition:
-                'transform 0.6s cubic-bezier(0.65, 0, 0, 1) 0.05s, opacity 0.4s ease',
-            }}
-            className="nav_logo_wrap flex items-center justify-center w-[3.75rem] h-[52px] rounded-full bg-white/95 border border-black/[0.08] shadow-[0_8px_24px_rgba(0,0,0,0.08)] cursor-pointer hover:bg-neutral-50 shrink-0 group active:scale-90 z-30"
-            title="Recenter Infinite Canvas"
-          >
-            <Image
-              src="/icons/dock-main-dark-128.png"
-              alt="Main Workspace Emblem"
-              width={36}
-              height={36}
-              referrerPolicy="no-referrer"
-              className="w-9 h-9 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 drop-shadow-[0_2px_8px_rgba(0,0,0,0.1)]"
-              priority
-            />
-          </div>
-
-          {/* 2. Inner Interaction Pill: .nav_bar_inner (Space-Claim Tradeoff) */}
-          <div
-            id="liquid-dock"
-            style={{
-              width: isDockOpen ? '100%' : 'calc(100% - 4.25rem)',
-              backgroundColor: isDockOpen ? '#141414' : 'rgba(255, 255, 255, 0.95)',
-              color: isDockOpen ? '#FFFFFF' : '#171717',
-              transition:
-                'width 0.6s cubic-bezier(0.65, 0, 0, 1), background-color 0.4s ease, color 0.4s ease',
-            }}
-            className="nav_bar_inner flex items-center justify-between gap-0.5 sm:gap-1 p-1 sm:p-1.5 rounded-full backdrop-blur-2xl border border-black/[0.08] shadow-[0_12px_36px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.03)] overflow-visible"
-          >
-            {/* Subtle Dock Reposition Grip Handle */}
-            <div
-              onPointerDown={(e) => dockDragControls.start(e)}
-              className="flex items-center justify-center w-4 sm:w-5 h-9 text-neutral-300 hover:text-neutral-600 cursor-grab active:cursor-grabbing px-0.5 touch-none shrink-0"
-              title="Drag grip to reposition dock on screen"
-            >
-              <GripHorizontal className="w-3.5 h-3.5" />
-            </div>
-
-            {/* LEFT INFINITE LOOPING RIBBON (Creation, workspace, library, shapes, checklist, quick undo/redo) */}
-            <div
-              id="liquid-left-tools-viewport"
-              onPointerDown={handleLeftRibbonPointerDown}
-              onPointerMove={handleLeftRibbonPointerMove}
-              onPointerUp={handleLeftRibbonPointerUp}
-              onPointerCancel={handleLeftRibbonPointerUp}
-              onWheel={handleLeftRibbonWheel}
-              className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[230px] lg:w-[260px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
-                leftIsHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
-              }`}
-              title="Hold and slide finger left or right to reveal creation tools"
-            >
-              {/* Left Edge Subtle Fade */}
-              <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
-
-              {/* Right Edge Subtle Fade */}
-              <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
-
-              {/* Infinite Looping Track */}
-              <div
-                className="flex items-center will-change-transform"
-                style={{
-                  transform: `translate3d(${leftTranslateX}px, 0, 0)`,
-                  width: `${leftOneLoopWidth * 3}px`,
-                }}
-              >
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l0'))}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l1'))}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${leftOneLoopWidth}px` }}>
-                  {leftToolDefinitions.map((item) => renderLeftToolButton(item, 'l2'))}
-                </div>
-              </div>
-            </div>
-
-            {/* DOCK EXPAND / RECENTER TRIGGER BUTTON (Complete Event Isolation) */}
-            <button
-              id="btn-dock-main-center"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsDockOpen(!isDockOpen);
-              }}
-              className="relative shrink-0 flex items-center justify-center p-1 cursor-pointer select-none group active:scale-90 transition-transform outline-none z-30 rounded-full hover:bg-neutral-100/30"
-              title={isDockOpen ? 'Collapse dock' : 'Expand full dock space'}
-            >
-              <Image
-                src="/icons/dock-main-dark-128.png"
-                alt="Main Workspace Emblem"
-                width={36}
-                height={36}
-                referrerPolicy="no-referrer"
-                className="w-8 h-8 sm:w-9 sm:h-9 object-contain pointer-events-none select-none transition-transform duration-200 group-hover:scale-110 drop-shadow-[0_2px_8px_rgba(0,0,0,0.12)]"
-                priority
-              />
-            </button>
-
-            {/* RIGHT INFINITE LOOPING RIBBON (Drawing tools, colors, undo/redo, export, assistant) */}
-            <div
-              id="liquid-tools-viewport"
-              onPointerDown={handleRibbonPointerDown}
-              onPointerMove={handleRibbonPointerMove}
-              onPointerUp={handleRibbonPointerUp}
-              onPointerCancel={handleRibbonPointerUp}
-              onWheel={handleRibbonWheel}
-              className={`relative overflow-hidden w-[125px] xs:w-[155px] sm:w-[195px] md:w-[230px] lg:w-[260px] h-10 flex items-center cursor-grab active:cursor-grabbing touch-none select-none transition-all duration-200 ${
-                isHolding ? 'scale-[0.98] translate-y-0.5' : 'scale-100 translate-y-0'
-              }`}
-              title="Hold and slide finger left or right to reveal all drawing tools"
-            >
-              {/* Left Edge Subtle Fade */}
-              <div className="absolute left-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-r from-white/95 to-transparent z-10 pointer-events-none" />
-
-              {/* Right Edge Subtle Fade */}
-              <div className="absolute right-0 top-0 bottom-0 w-3 sm:w-4 bg-gradient-to-l from-white/95 to-transparent z-10 pointer-events-none" />
-
-              {/* Infinite Looping Track */}
-              <div
-                className="flex items-center will-change-transform"
-                style={{
-                  transform: `translate3d(${translateX}px, 0, 0)`,
-                  width: `${oneLoopWidth * 3}px`,
-                }}
-              >
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                  {toolDefinitions.map((item) => renderToolButton(item, 'c0'))}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                  {toolDefinitions.map((item) => renderToolButton(item, 'c1'))}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0" style={{ width: `${oneLoopWidth}px` }}>
-                  {toolDefinitions.map((item) => renderToolButton(item, 'c2'))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Backdrop overlay for active popups so clicking anywhere outside dismisses them */}
-      {(showShapesMenu || showColorPicker || showExportMenu) && (
-        <div
-          className="fixed inset-0 z-40 bg-black/15 backdrop-blur-[0.5px] pointer-events-auto"
-          onClick={() => {
-            setShowShapesMenu(false);
-            setShowColorPicker(false);
-            setShowExportMenu(false);
-          }}
+          onClick={() => setActivePopover('none')}
+          className="fixed inset-0 z-40 bg-transparent pointer-events-auto"
         />
       )}
 
-      {/* Floating Color Palette & Stroke Size Panel */}
-      <AnimatePresence>
-        {showColorPicker && (
-          <motion.div
-            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
-            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
-            style={{ transformOrigin: 'bottom center' }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-3.5 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-3 w-[calc(100vw-32px)] max-w-[280px] z-50 pointer-events-auto select-none"
-          >
-            <div className="flex items-center justify-between pb-1 border-b border-neutral-100">
-              <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-                Ink Palette
-              </span>
-              <button
-                onClick={() => setShowColorPicker(false)}
-                className="text-[11px] text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+      {/* Bottom Dock & Popovers Wrapper */}
+      <div className="fixed bottom-7 left-0 right-0 z-50 flex flex-col items-center pointer-events-none px-3.5 select-none pb-[env(safe-area-inset-bottom,0px)]">
+        <div className="relative w-full max-w-[344px] flex flex-col items-center">
+          {/* ================================================================= */}
+          {/* 1. Tool Size & Opacity Popover */}
+          {/* ================================================================= */}
+          <AnimatePresence>
+            {activePopover === 'tool' && (
+              <motion.div
+                key="tool-popover"
+                initial={{ opacity: 0, scale: 0.88, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.88, y: 10 }}
+                transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
+                className="pointer-events-auto absolute bottom-[72px] w-full p-3.5 bg-white/94 backdrop-blur-2xl backdrop-saturate-180 rounded-[22px] border border-black/10 shadow-[0_16px_36px_rgba(0,0,0,0.1),inset_0_1px_1px_rgba(255,255,255,0.9)] z-50"
               >
-                Done
-              </button>
-            </div>
-            <div className="flex items-center justify-center gap-2">
-              {INK_COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  onClick={() => {
-                    onSelectColor(c.value);
-                  }}
-                  className={`w-6 h-6 rounded-full border transition-transform cursor-pointer ${
-                    currentColor === c.value
-                      ? 'scale-125 ring-2 ring-neutral-900 border-white'
-                      : 'border-neutral-300 hover:scale-110'
-                  }`}
-                  style={{ backgroundColor: c.value }}
-                  title={c.label}
-                />
-              ))}
-            </div>
+                {/* Title */}
+                <div className="text-[13px] font-medium text-neutral-500 mb-2.5">
+                  {TOOL_SIZES[popoverTool]?.name} size
+                </div>
 
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-100">
-              <span className="text-[11px] text-neutral-500 font-medium">Size</span>
-              <input
-                type="range"
-                min="1.5"
-                max="14"
-                step="0.5"
-                value={strokeWidth}
-                onChange={(e) => onChangeStrokeWidth(parseFloat(e.target.value))}
-                className="w-24 h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-neutral-800"
+                {/* 3 Preset Sizes with Dynamic Sized Dots */}
+                <div className="flex gap-2">
+                  {TOOL_SIZES[popoverTool]?.presets.map((s) => {
+                    const isSelected = Math.abs(strokeWidth - s) < 0.2;
+                    // Calculate preview dot diameter
+                    const dotDiameter =
+                      popoverTool === 'pen'
+                        ? Math.max(5, Math.min(20, Math.round(s * 3.5)))
+                        : Math.max(8, Math.min(24, Math.round(s * 0.9)));
+
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => onChangeStrokeWidth(s)}
+                        className={`flex-1 h-11 border-none rounded-[14px] flex items-center justify-center cursor-pointer transition-all duration-200 active:scale-95 ${
+                          isSelected
+                            ? 'bg-black/[0.08] ring-2 ring-[#141414]'
+                            : 'bg-black/[0.05] hover:bg-black/[0.08]'
+                        }`}
+                        title={`Size ${s}px`}
+                      >
+                        <span
+                          className="block rounded-full bg-[#141414] transition-all"
+                          style={{
+                            width: `${dotDiameter}px`,
+                            height: `${dotDiameter}px`,
+                          }}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Continuous fine-tuning slider */}
+                <div className="flex items-center gap-3 mt-3 text-sm text-neutral-500">
+                  <span className="text-xs font-medium text-neutral-600">Custom</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max={popoverTool === 'pen' ? 12 : 36}
+                    step="0.5"
+                    value={strokeWidth}
+                    onChange={(e) => onChangeStrokeWidth(parseFloat(e.target.value))}
+                    className="flex-1 h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-[#141414]"
+                  />
+                  <span className="text-xs font-mono font-medium text-neutral-700 min-w-[32px] text-right">
+                    {strokeWidth}px
+                  </span>
+                </div>
+
+                {/* Highlighter Opacity Slider */}
+                {popoverTool === 'highlighter' && (
+                  <div className="flex items-center gap-3 mt-2.5 text-sm text-neutral-500">
+                    <span className="text-xs font-medium text-neutral-600">Opacity</span>
+                    <input
+                      type="range"
+                      min="20"
+                      max="80"
+                      step="5"
+                      value={highlighterOpacity}
+                      onChange={(e) => setHighlighterOpacity(parseInt(e.target.value, 10))}
+                      className="flex-1 h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-[#141414]"
+                    />
+                    <span className="text-xs font-mono font-medium text-neutral-700 min-w-[32px] text-right">
+                      {highlighterOpacity}%
+                    </span>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ================================================================= */}
+          {/* 2. Color Swatch Popover */}
+          {/* ================================================================= */}
+          <AnimatePresence>
+            {activePopover === 'color' && (
+              <motion.div
+                key="color-popover"
+                initial={{ opacity: 0, scale: 0.88, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.88, y: 10 }}
+                transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
+                className="pointer-events-auto absolute bottom-[72px] w-full p-3.5 bg-white/94 backdrop-blur-2xl backdrop-saturate-180 rounded-[22px] border border-black/10 shadow-[0_16px_36px_rgba(0,0,0,0.1),inset_0_1px_1px_rgba(255,255,255,0.9)] z-50"
+              >
+                <div className="text-[13px] font-medium text-neutral-500 mb-2.5">Color</div>
+                <div className="flex justify-between items-center">
+                  {PALETTE.map((p) => {
+                    const isSelected = currentColor.toLowerCase() === p.color.toLowerCase();
+                    return (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => onSelectColor(p.color)}
+                        className="w-10 h-10 border-none bg-transparent rounded-full flex items-center justify-center p-0 cursor-pointer transition-transform active:scale-90"
+                        title={p.label}
+                      >
+                        <span
+                          className={`block w-7 h-7 rounded-full transition-transform shadow-xs ${
+                            isSelected ? 'ring-2 ring-[#141414] ring-offset-2 scale-105' : 'hover:scale-105'
+                          }`}
+                          style={{
+                            backgroundColor: p.color,
+                            border: p.color === '#141414' ? 'none' : '0.5px solid rgba(0,0,0,0.15)',
+                          }}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ================================================================= */}
+          {/* 3. The Main Bottom Dock (Matches Prototype Exactly) */}
+          {/* ================================================================= */}
+          <div
+            id="mobile-dock"
+            role="toolbar"
+            aria-label="Drawing tools"
+            className="pointer-events-auto w-full h-[60px] flex items-center px-2 bg-white/92 backdrop-blur-2xl backdrop-saturate-180 border border-black/10 rounded-[30px] shadow-[0_12px_32px_rgba(0,0,0,0.08),0_1px_3px_rgba(0,0,0,0.04),inset_0_1px_1px_rgba(255,255,255,0.9)]"
+          >
+            {/* Tool 1: Pen */}
+            <button
+              type="button"
+              onClick={() => handleToolClick('pen')}
+              aria-label="Pen"
+              aria-pressed={currentTool === 'pen'}
+              className={`flex-1 max-w-[48px] h-11 border-none rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                currentTool === 'pen'
+                  ? 'bg-[#141414] text-white -translate-y-1.5 shadow-sm active:scale-90 active:-translate-y-1.5'
+                  : 'text-[#141414] hover:bg-black/[0.06] active:scale-90'
+              }`}
+              title="Pen (click again for sizes)"
+            >
+              <PenTool className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {/* Tool 2: Highlighter */}
+            <button
+              type="button"
+              onClick={() => handleToolClick('highlighter')}
+              aria-label="Highlighter"
+              aria-pressed={currentTool === 'highlighter'}
+              className={`flex-1 max-w-[48px] h-11 border-none rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                currentTool === 'highlighter'
+                  ? 'bg-[#141414] text-white -translate-y-1.5 shadow-sm active:scale-90 active:-translate-y-1.5'
+                  : 'text-[#141414] hover:bg-black/[0.06] active:scale-90'
+              }`}
+              title="Highlighter (click again for sizes)"
+            >
+              <Highlighter className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {/* Tool 3: Eraser */}
+            <button
+              type="button"
+              onClick={() => handleToolClick('eraser')}
+              aria-label="Eraser"
+              aria-pressed={currentTool === 'eraser'}
+              className={`flex-1 max-w-[48px] h-11 border-none rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                currentTool === 'eraser'
+                  ? 'bg-[#141414] text-white -translate-y-1.5 shadow-sm active:scale-90 active:-translate-y-1.5'
+                  : 'text-[#141414] hover:bg-black/[0.06] active:scale-90'
+              }`}
+              title="Eraser (click again for sizes)"
+            >
+              <Eraser className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {/* Tool 4: Lasso / Select */}
+            <button
+              type="button"
+              onClick={() => handleToolClick('select')}
+              aria-label="Lasso"
+              aria-pressed={currentTool === 'select'}
+              className={`flex-1 max-w-[48px] h-11 border-none rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                currentTool === 'select'
+                  ? 'bg-[#141414] text-white -translate-y-1.5 shadow-sm active:scale-90 active:-translate-y-1.5'
+                  : 'text-[#141414] hover:bg-black/[0.06] active:scale-90'
+              }`}
+              title="Lasso / Select"
+            >
+              <LassoSelect className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {/* Separator */}
+            <span className="w-[0.5px] h-6 bg-black/10 mx-1 shrink-0" />
+
+            {/* Color Swatch Button */}
+            <button
+              id="colorbtn"
+              type="button"
+              onClick={handleColorButtonClick}
+              aria-label="Color"
+              className="flex-1 max-w-[48px] h-11 border-none bg-transparent rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-200 hover:bg-black/[0.06] active:scale-90"
+              title="Color Palette"
+            >
+              <span
+                id="sw"
+                className="block w-[26px] h-[26px] rounded-full shadow-2xs"
+                style={{
+                  backgroundColor: currentColor,
+                  outline: '0.5px solid rgba(0,0,0,0.15)',
+                  outlineOffset: '2px',
+                }}
               />
-              <span className="text-xs font-mono text-neutral-700 w-4 text-right">
-                {strokeWidth}
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </button>
 
-      {/* Floating Shapes, Lines, Sticky Notes & Checklist Menu (Viewport-safe, centered on mobile) */}
-      <AnimatePresence>
-        {showShapesMenu && (
-          <motion.div
-            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
-            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
-            style={{ transformOrigin: 'bottom center' }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-3.5 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-2.5 w-[calc(100vw-32px)] max-w-[320px] max-h-[72vh] overflow-y-auto z-50 pointer-events-auto select-none"
+            {/* Undo Button */}
+            <button
+              id="undo"
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              aria-label="Undo"
+              aria-disabled={!canUndo}
+              className={`flex-1 max-w-[48px] h-11 border-none bg-transparent rounded-[22px] flex items-center justify-center transition-all duration-200 text-[#141414] ${
+                canUndo
+                  ? 'cursor-pointer hover:bg-black/[0.06] active:scale-90'
+                  : 'opacity-35 cursor-not-allowed'
+              }`}
+              title="Undo"
+            >
+              <Undo2 className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {/* Add (+) Button */}
+            <button
+              id="plus"
+              type="button"
+              onClick={handlePlusClick}
+              aria-label="Add to canvas"
+              className={`flex-1 max-w-[48px] h-11 border-none rounded-[22px] flex items-center justify-center cursor-pointer transition-all duration-200 text-[#141414] ${
+                isSheetOpen
+                  ? 'bg-black/[0.1] scale-95'
+                  : 'hover:bg-black/[0.06] active:scale-90'
+              }`}
+              title="Add to canvas"
+            >
+              <Plus className="w-5 h-5" strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* 4. iOS 18 Bottom Sheet ("Add to canvas") */}
+      {/* ================================================================= */}
+      <div
+        id="sheet"
+        role="dialog"
+        aria-label="Add to canvas"
+        style={{
+          transform: isSheetOpen
+            ? `translateY(${sheetDragY}px)`
+            : 'translateY(102%)',
+          transition: isDraggingSheet ? 'none' : 'transform 0.45s cubic-bezier(0.32, 0.72, 0, 1)',
+        }}
+        className="fixed left-0 right-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto px-4 pb-8 bg-[#F4F3EF] rounded-t-[28px] border-t border-black/10 shadow-[0_-10px_40px_rgba(0,0,0,0.12)] text-[#141414]"
+      >
+        {/* Grab Handle */}
+        <div
+          id="grab"
+          onPointerDown={handleGrabPointerDown}
+          onPointerMove={handleGrabPointerMove}
+          onPointerUp={handleGrabPointerUp}
+          onPointerCancel={handleGrabPointerUp}
+          className="h-7 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing"
+        >
+          <span className="block w-9 h-1.5 rounded-full bg-neutral-400/50" />
+        </div>
+
+        {/* Sheet Header */}
+        <div className="flex justify-between items-center mb-3 px-1">
+          <span className="text-[20px] font-semibold text-[#141414]">Add to canvas</span>
+          <button
+            type="button"
+            onClick={closeAll}
+            aria-label="Close"
+            className="w-8 h-8 rounded-full bg-black/[0.06] hover:bg-black/[0.1] flex items-center justify-center text-[#141414] cursor-pointer transition-colors active:scale-90"
           >
-            <div className="flex items-center justify-between pb-1 border-b border-neutral-100">
-              <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-                Add to Canvas
-              </span>
-              <button
-                onClick={() => setShowShapesMenu(false)}
-                className="text-[11px] text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-            {/* Sticky Notes */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
-                Sticky Notes
-              </span>
-              <div className="flex items-center justify-between gap-1.5">
-                {[
-                  { label: 'Yellow', bg: '#FEF08A', border: '#FACC15' },
-                  { label: 'Pink', bg: '#FBCFE8', border: '#F472B6' },
-                  { label: 'Mint', bg: '#BBF7D0', border: '#4ADE80' },
-                  { label: 'Sky', bg: '#BAE6FD', border: '#38BDF8' },
-                  { label: 'Lavender', bg: '#E9D5FF', border: '#C084FC' },
-                ].map((note) => (
+        {/* 5-Column Tiles Grid (Image, Shape, Text, Checklist, Note) */}
+        <div className="grid grid-cols-5 gap-2 mb-4">
+          {/* Tile 1: Image */}
+          <button
+            type="button"
+            onClick={() => {
+              fileInputRef.current?.click();
+              closeAll();
+            }}
+            className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white text-[#141414] text-[11px] font-medium border-none cursor-pointer shadow-2xs hover:bg-black/[0.04] active:scale-95 transition-all"
+          >
+            <ImagePlus className="w-6 h-6 text-neutral-700" strokeWidth={1.8} />
+            <span>Image</span>
+          </button>
+
+          {/* Tile 2: Shape */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowShapePicker((prev) => !prev);
+              setShowNotePicker(false);
+            }}
+            className={`flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl text-[#141414] text-[11px] font-medium border-none cursor-pointer shadow-2xs transition-all ${
+              showShapePicker
+                ? 'bg-black/[0.1] ring-2 ring-[#141414]'
+                : 'bg-white hover:bg-black/[0.04] active:scale-95'
+            }`}
+          >
+            <Shapes className="w-6 h-6 text-neutral-700" strokeWidth={1.8} />
+            <span>Shape</span>
+          </button>
+
+          {/* Tile 3: Text */}
+          <button
+            type="button"
+            onClick={() => {
+              onSelectTool('text');
+              closeAll();
+            }}
+            className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white text-[#141414] text-[11px] font-medium border-none cursor-pointer shadow-2xs hover:bg-black/[0.04] active:scale-95 transition-all"
+          >
+            <Type className="w-6 h-6 text-neutral-700" strokeWidth={1.8} />
+            <span>Text</span>
+          </button>
+
+          {/* Tile 4: Checklist */}
+          <button
+            type="button"
+            onClick={() => {
+              onAddChecklist();
+              closeAll();
+            }}
+            className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white text-[#141414] text-[11px] font-medium border-none cursor-pointer shadow-2xs hover:bg-black/[0.04] active:scale-95 transition-all"
+          >
+            <ListTodo className="w-6 h-6 text-neutral-700" strokeWidth={1.8} />
+            <span>Checklist</span>
+          </button>
+
+          {/* Tile 5: Note */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowNotePicker((prev) => !prev);
+              setShowShapePicker(false);
+            }}
+            className={`flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl text-[#141414] text-[11px] font-medium border-none cursor-pointer shadow-2xs transition-all ${
+              showNotePicker
+                ? 'bg-black/[0.1] ring-2 ring-[#141414]'
+                : 'bg-white hover:bg-black/[0.04] active:scale-95'
+            }`}
+          >
+            <StickyNote className="w-6 h-6 text-neutral-700" strokeWidth={1.8} />
+            <span>Note</span>
+          </button>
+        </div>
+
+        {/* Sub-Panel: Shape Picker (when Shape Tile is clicked) */}
+        <AnimatePresence>
+          {showShapePicker && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-white rounded-2xl p-2.5 mb-4 shadow-2xs grid grid-cols-4 sm:grid-cols-8 gap-2 overflow-hidden"
+            >
+              {[
+                { type: 'rectangle' as ShapeType, label: 'Rect', icon: Square },
+                { type: 'rounded-rectangle' as ShapeType, label: 'Round', icon: Square },
+                { type: 'circle' as ShapeType, label: 'Circle', icon: Circle },
+                { type: 'triangle' as ShapeType, label: 'Triangle', icon: Triangle },
+                { type: 'diamond' as ShapeType, label: 'Diamond', icon: Diamond },
+                { type: 'star' as ShapeType, label: 'Star', icon: Star },
+                { type: 'line' as ShapeType, label: 'Line', icon: Minus },
+                { type: 'arrow' as ShapeType, label: 'Arrow', icon: Workflow },
+              ].map((s) => {
+                const Icon = s.icon;
+                return (
                   <button
-                    key={note.label}
+                    key={s.type}
+                    type="button"
                     onClick={() => {
-                      onAddShape('sticky-note', '#1E1E1E', note.bg);
-                      setShowShapesMenu(false);
+                      onAddShape(s.type, currentColor, 'transparent');
+                      closeAll();
                     }}
-                    className="w-8 h-8 rounded-lg shadow-xs border transition-transform hover:scale-110 active:scale-95 flex items-center justify-center text-xs cursor-pointer"
-                    style={{ backgroundColor: note.bg, borderColor: note.border }}
-                    title={`Add ${note.label} Sticky Note`}
+                    className="flex flex-col items-center gap-1 p-2 rounded-xl bg-black/[0.03] hover:bg-black/[0.07] text-neutral-700 transition-colors cursor-pointer text-[11px]"
                   >
-                    <StickyNote className="w-3.5 h-3.5 opacity-80 text-neutral-900" />
+                    <Icon className="w-4 h-4 text-neutral-700" />
+                    <span>{s.label}</span>
                   </button>
-                ))}
-              </div>
-            </div>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            {/* Geometric Shapes */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
-              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
-                Geometric Shapes
-              </span>
-              <div className="grid grid-cols-3 gap-1.5">
+        {/* Sub-Panel: Note Color Picker (when Note Tile is clicked) */}
+        <AnimatePresence>
+          {showNotePicker && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-white rounded-2xl p-2.5 mb-4 shadow-2xs flex gap-2 justify-between overflow-hidden"
+            >
+              {STICKY_NOTES.map((n) => (
                 <button
+                  key={n.label}
+                  type="button"
                   onClick={() => {
-                    onAddShape('rectangle', currentColor, 'transparent');
-                    setShowShapesMenu(false);
+                    onAddShape('sticky-note', '#141414', n.bg);
+                    closeAll();
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Rectangle"
+                  className="flex-1 h-10 rounded-xl border flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-xs"
+                  style={{ backgroundColor: n.bg, borderColor: n.border }}
+                  title={n.label}
                 >
-                  <Square className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Rect</span>
+                  <StickyNote className="w-4 h-4 text-neutral-800 opacity-80" />
                 </button>
-                <button
-                  onClick={() => {
-                    onAddShape('rounded-rectangle', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Rounded Rectangle"
-                >
-                  <Square className="w-3.5 h-3.5 text-neutral-600 rounded-xs" />
-                  <span>Round</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAddShape('circle', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Circle"
-                >
-                  <Circle className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Circle</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAddShape('triangle', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Triangle"
-                >
-                  <Triangle className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Triangle</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAddShape('diamond', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Diamond"
-                >
-                  <Diamond className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Diamond</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAddShape('star', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Star"
-                >
-                  <Star className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Star</span>
-                </button>
-              </div>
-            </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            {/* Lines & Arrows */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
-              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
-                Lines & Connectors
-              </span>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  onClick={() => {
-                    onAddShape('line', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Straight Line"
-                >
-                  <Minus className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Line</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onAddShape('arrow', currentColor, 'transparent');
-                    setShowShapesMenu(false);
-                  }}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title="Directional Arrow"
-                >
-                  <MoveRight className="w-3.5 h-3.5 text-neutral-600" />
-                  <span>Arrow</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Checklist Tool */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-100">
-              <span className="text-[10px] uppercase font-semibold text-neutral-500 tracking-wider">
-                Interactive Tasks
-              </span>
-              <button
-                onClick={() => {
-                  onAddChecklist();
-                  setShowShapesMenu(false);
-                }}
-                className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-neutral-700 bg-neutral-100 hover:bg-neutral-200 hover:text-neutral-900 transition-colors text-left cursor-pointer"
-                title="Add Checklist"
-              >
-                <ListTodo className="w-4 h-4 text-emerald-600 shrink-0" />
-                <div className="flex flex-col min-w-0">
-                  <span className="font-medium text-neutral-900">Checklist Card</span>
-                  <span className="text-[10px] text-neutral-500 truncate">Tick, strike out & hide completed</span>
-                </div>
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Floating Export Menu */}
-      <AnimatePresence>
-        {showExportMenu && (
-          <motion.div
-            initial={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            animate={{ scaleX: 1, scaleY: 1, y: 0, opacity: 1 }}
-            exit={{ scaleX: 0.15, scaleY: 0.1, y: 35, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 26, mass: 0.75 }}
-            style={{ transformOrigin: 'bottom center' }}
-            className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white/95 text-neutral-800 rounded-2xl p-2 shadow-2xl border border-neutral-200/90 backdrop-blur-xl flex flex-col gap-1 w-[calc(100vw-32px)] max-w-[240px] z-50 pointer-events-auto select-none"
+        {/* Action List Items (Matches Prototype .list) */}
+        <div className="bg-white rounded-2xl overflow-hidden shadow-2xs divide-y divide-black/[0.07]">
+          {/* Action 1: Start Project / All Projects */}
+          <button
+            type="button"
+            onClick={() => {
+              closeAll();
+              onOpenProjects();
+            }}
+            className="flex items-center gap-3 w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
           >
-            {onShareThoughtDump && (
-              <button
-                onClick={() => {
-                  onShareThoughtDump();
-                  setShowExportMenu(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-900 bg-neutral-100/90 hover:bg-neutral-900 hover:text-white rounded-xl transition-all font-semibold text-left cursor-pointer group"
-              >
-                <Globe2 className="w-4 h-4 text-neutral-800 group-hover:text-white transition-colors" strokeWidth={1.8} />
-                <div className="flex flex-col">
-                  <span>Share Anonymous Thought</span>
-                  <span className="text-[10px] font-normal text-neutral-500 group-hover:text-neutral-300">Broadcast to Thoughtspace feed</span>
-                </div>
-              </button>
-            )}
-            <div className="h-px bg-neutral-100 my-0.5" />
+            <FolderOpen className="w-5 h-5 text-neutral-500" />
+            <span>All Projects</span>
+          </button>
+
+          {/* Action 2: New Canvas */}
+          <button
+            type="button"
+            onClick={() => {
+              closeAll();
+              onNewProject();
+            }}
+            className="flex items-center gap-3 w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
+          >
+            <FolderPlus className="w-5 h-5 text-neutral-500" />
+            <span>Start new project</span>
+          </button>
+
+          {/* Action 3: Share canvas / Export */}
+          <button
+            type="button"
+            onClick={() => {
+              closeAll();
+              onExportPNG();
+            }}
+            className="flex items-center justify-between w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Share2 className="w-5 h-5 text-neutral-500" />
+              <span>Share canvas (PNG)</span>
+            </div>
             <button
-              onClick={() => {
-                onExportPNG();
-                setShowExportMenu(false);
-              }}
-              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
-            >
-              <ImageIcon className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
-              <span>Export as PNG Image</span>
-            </button>
-            <button
-              onClick={() => {
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeAll();
                 onExportPDF();
-                setShowExportMenu(false);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
+              className="text-xs px-2.5 py-1 rounded-lg bg-black/[0.06] hover:bg-black/[0.1] text-neutral-700"
             >
-              <FileText className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
-              <span>Export as PDF Document</span>
+              or PDF
             </button>
-            {onExportJSON && (
-              <button
-                onClick={() => {
-                  onExportJSON();
-                  setShowExportMenu(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2 text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 rounded-xl transition-colors font-medium text-left cursor-pointer"
-              >
-                <Download className="w-4 h-4 text-neutral-500" strokeWidth={1.8} />
-                <span>Download Canvas (JSON)</span>
-              </button>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          </button>
+
+          {/* Action 4: Ask AI */}
+          <button
+            type="button"
+            onClick={() => {
+              closeAll();
+              onTriggerAssistant();
+            }}
+            className="flex items-center gap-3 w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
+          >
+            <Sparkles className={`w-5 h-5 ${isAssistantThinking ? 'text-[#007AFF] animate-pulse' : 'text-neutral-500'}`} />
+            <span>Ask AI</span>
+          </button>
+
+          {/* Action 5: Recenter Canvas */}
+          <button
+            type="button"
+            onClick={() => {
+              closeAll();
+              window.dispatchEvent(new CustomEvent('recenter-canvas'));
+            }}
+            className="flex items-center gap-3 w-full h-[52px] px-4 bg-transparent hover:bg-black/[0.04] text-[#141414] text-[15px] font-medium text-left cursor-pointer transition-colors"
+          >
+            <Crosshair className="w-5 h-5 text-neutral-500" />
+            <span>Recenter canvas (0, 0)</span>
+          </button>
+
+          {/* Action 6: Redo (if redo history exists) */}
+          <button
+            type="button"
+            disabled={!canRedo}
+            onClick={() => {
+              onRedo();
+            }}
+            className={`flex items-center gap-3 w-full h-[52px] px-4 bg-transparent text-[15px] font-medium text-left transition-colors ${
+              canRedo
+                ? 'hover:bg-black/[0.04] text-[#141414] cursor-pointer'
+                : 'text-neutral-300 cursor-not-allowed'
+            }`}
+          >
+            <Redo2 className="w-5 h-5 text-neutral-400" />
+            <span>Redo</span>
+          </button>
+        </div>
+      </div>
+    </>
   );
 };

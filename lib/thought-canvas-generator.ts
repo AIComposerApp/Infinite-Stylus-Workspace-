@@ -1,15 +1,26 @@
-import { Stroke, CanvasTextItem } from '@/types/canvas';
+import {
+  Stroke,
+  CanvasTextItem,
+  CanvasShapeItem,
+  CanvasImageItem,
+  CanvasChecklistItem,
+  CanvasConnectorItem,
+} from '@/types/canvas';
 import { calculateStrokeBounds } from '@/lib/canvas-utils';
 
 export interface ParsedThoughtCanvas {
   strokes: Stroke[];
   canvasTexts: CanvasTextItem[];
+  shapes: CanvasShapeItem[];
+  images: CanvasImageItem[];
+  checklists: CanvasChecklistItem[];
+  connectors: CanvasConnectorItem[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
 /**
- * Parses existing serialized canvas payload or generates authentic hand-drawn strokes
- * and handwritten texts for any shared thought.
+ * Parses existing serialized canvas payload or generates authentic hand-drawn strokes,
+ * shapes, sticky notes, checklists, and handwritten texts for any shared thought.
  */
 export function parseOrGenerateThoughtCanvas(
   title: string,
@@ -23,8 +34,18 @@ export function parseOrGenerateThoughtCanvas(
       const parsed = JSON.parse(rawPayload);
       const strokes: Stroke[] = Array.isArray(parsed.strokes) ? parsed.strokes : [];
       const canvasTexts: CanvasTextItem[] = Array.isArray(parsed.canvasTexts) ? parsed.canvasTexts : [];
+      const shapes: CanvasShapeItem[] = Array.isArray(parsed.shapes) ? parsed.shapes : [];
+      const images: CanvasImageItem[] = Array.isArray(parsed.images) ? parsed.images : [];
+      const checklists: CanvasChecklistItem[] = Array.isArray(parsed.checklists) ? parsed.checklists : [];
+      const connectors: CanvasConnectorItem[] = Array.isArray(parsed.connectors) ? parsed.connectors : [];
 
-      if (strokes.length > 0 || canvasTexts.length > 0) {
+      if (
+        strokes.length > 0 ||
+        canvasTexts.length > 0 ||
+        shapes.length > 0 ||
+        images.length > 0 ||
+        checklists.length > 0
+      ) {
         let minX = Infinity;
         let minY = Infinity;
         let maxX = -Infinity;
@@ -42,8 +63,36 @@ export function parseOrGenerateThoughtCanvas(
         canvasTexts.forEach((t) => {
           if (t.x < minX) minX = t.x;
           if (t.y < minY) minY = t.y;
-          if (t.x + 300 > maxX) maxX = t.x + 300;
-          if (t.y + 100 > maxY) maxY = t.y + 100;
+          if (t.x + 280 > maxX) maxX = t.x + 280;
+          if (t.y + 60 > maxY) maxY = t.y + 60;
+        });
+
+        shapes.forEach((s) => {
+          if (s.x < minX) minX = s.x;
+          if (s.y < minY) minY = s.y;
+          if (s.x + s.width > maxX) maxX = s.x + s.width;
+          if (s.y + s.height > maxY) maxY = s.y + s.height;
+        });
+
+        images.forEach((img) => {
+          if (img.x < minX) minX = img.x;
+          if (img.y < minY) minY = img.y;
+          if (img.x + img.width > maxX) maxX = img.x + img.width;
+          if (img.y + img.height > maxY) maxY = img.y + img.height;
+        });
+
+        checklists.forEach((c) => {
+          if (c.x < minX) minX = c.x;
+          if (c.y < minY) minY = c.y;
+          if (c.x + c.width > maxX) maxX = c.x + c.width;
+          if (c.y + 200 > maxY) maxY = c.y + 200;
+        });
+
+        connectors.forEach((conn) => {
+          if (conn.from.x < minX) minX = conn.from.x;
+          if (conn.from.y < minY) minY = conn.from.y;
+          if (conn.to.x > maxX) maxX = conn.to.x;
+          if (conn.to.y > maxY) maxY = conn.to.y;
         });
 
         if (minX === Infinity) {
@@ -53,82 +102,126 @@ export function parseOrGenerateThoughtCanvas(
           maxY = 500;
         }
 
-        return { strokes, canvasTexts, bounds: { minX, minY, maxX, maxY } };
+        return {
+          strokes,
+          canvasTexts,
+          shapes,
+          images,
+          checklists,
+          connectors,
+          bounds: { minX, minY, maxX, maxY },
+        };
       }
     } catch {
       // Fallback to generated canvas
     }
   }
 
-  // Generate authentic thought sketches
+  // Generate authentic multidimensional thought sketches
   const strokes: Stroke[] = [];
   const canvasTexts: CanvasTextItem[] = [];
+  const shapes: CanvasShapeItem[] = [];
+  const images: CanvasImageItem[] = [];
+  const checklists: CanvasChecklistItem[] = [];
+  const connectors: CanvasConnectorItem[] = [];
 
-  const categoryColors: Record<string, { stroke: string; accent: string }> = {
-    Engineering: { stroke: '#1E293B', accent: '#2563EB' },
-    'Creative Vision': { stroke: '#18181B', accent: '#D97706' },
-    Introspection: { stroke: '#1C1917', accent: '#059669' },
-    'Philosophy & Study': { stroke: '#0F172A', accent: '#7C3AED' },
-    'Ventures & Work': { stroke: '#1E1E1E', accent: '#DC2626' },
+  const categoryColors: Record<string, { stroke: string; accent: string; sticky: string }> = {
+    Engineering: { stroke: '#1E293B', accent: '#2563EB', sticky: '#EFF6FF' },
+    'Creative Vision': { stroke: '#18181B', accent: '#D97706', sticky: '#FEF3C7' },
+    Introspection: { stroke: '#1C1917', accent: '#059669', sticky: '#ECFDF5' },
+    'Philosophy & Study': { stroke: '#0F172A', accent: '#7C3AED', sticky: '#F5F3FF' },
+    'Ventures & Work': { stroke: '#1E1E1E', accent: '#DC2626', sticky: '#FEF2F2' },
   };
 
-  const colors = categoryColors[category] || { stroke: '#1E1E1E', accent: '#2563EB' };
+  const colors = categoryColors[category] || { stroke: '#1E1E1E', accent: '#2563EB', sticky: '#FEF3C7' };
 
   // 1. Central handwritten title
   canvasTexts.push({
     id: `text_title_${now}_1`,
     x: 220,
-    y: 120,
+    y: 110,
     text: title,
     color: colors.stroke,
-    fontSize: 28,
+    fontSize: 26,
     createdAt: now,
     updatedAt: now,
   });
 
-  // 2. Hand-drawn enclosing thought frame / cloud
-  const framePoints: { x: number; y: number; pressure: number }[] = [];
-  const originX = 200;
-  const originY = 100;
-  const frameWidth = 520;
-  const frameHeight = 360;
+  // 2. Sticky Note card with core observation
+  shapes.push({
+    id: `shape_sticky_${now}`,
+    type: 'sticky-note',
+    x: 600,
+    y: 150,
+    width: 200,
+    height: 180,
+    strokeColor: colors.accent,
+    strokeWidth: 1.5,
+    fillColor: colors.sticky,
+    text: `Core Focus:\n• Iterate spontaneously\n• Preserve creative momentum`,
+    textColor: '#1E1E1E',
+    fontSize: 14,
+    createdAt: now,
+    updatedAt: now,
+  });
 
-  // Top wavy edge
+  // 3. Checklist Card
+  checklists.push({
+    id: `checklist_${now}`,
+    title: 'Key Milestones',
+    x: 180,
+    y: 430,
+    width: 260,
+    hideCompleted: false,
+    themeColor: colors.accent,
+    items: [
+      { id: `c1_${now}`, text: 'Establish spatial anchors', completed: true },
+      { id: `c2_${now}`, text: 'Bridge analytical & visual models', completed: true },
+      { id: `c3_${now}`, text: 'Refine living ink transitions', completed: false },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 4. Hand-drawn enclosing thought frame
+  const framePoints: { x: number; y: number; pressure: number }[] = [];
+  const originX = 180;
+  const originY = 90;
+  const frameWidth = 660;
+  const frameHeight = 560;
+
   for (let x = 0; x <= frameWidth; x += 15) {
-    const wobble = Math.sin(x * 0.05) * 4;
+    const wobble = Math.sin(x * 0.05) * 3;
     framePoints.push({ x: originX + x, y: originY + wobble, pressure: 0.65 });
   }
-  // Right wavy edge
   for (let y = 0; y <= frameHeight; y += 15) {
-    const wobble = Math.cos(y * 0.05) * 4;
+    const wobble = Math.cos(y * 0.05) * 3;
     framePoints.push({ x: originX + frameWidth + wobble, y: originY + y, pressure: 0.7 });
   }
-  // Bottom wavy edge
   for (let x = frameWidth; x >= 0; x -= 15) {
-    const wobble = Math.sin(x * 0.05) * 4;
+    const wobble = Math.sin(x * 0.05) * 3;
     framePoints.push({ x: originX + x, y: originY + frameHeight + wobble, pressure: 0.65 });
   }
-  // Left wavy edge
   for (let y = frameHeight; y >= 0; y -= 15) {
-    const wobble = Math.cos(y * 0.05) * 4;
+    const wobble = Math.cos(y * 0.05) * 3;
     framePoints.push({ x: originX + wobble, y: originY + y, pressure: 0.7 });
   }
 
   strokes.push({
     id: `stroke_frame_${now}_1`,
     points: framePoints,
-    color: '#94A3B8',
-    width: 2.2,
+    color: '#CBD5E1',
+    width: 1.8,
     tool: 'pen',
     timestamp: now,
     bounds: calculateStrokeBounds(framePoints),
   });
 
-  // 3. Hand-drawn underline under title
+  // 5. Hand-drawn accent highlight under title
   const underlinePoints: { x: number; y: number; pressure: number }[] = [];
-  for (let x = 0; x <= 320; x += 10) {
+  for (let x = 0; x <= 280; x += 10) {
     const wobble = Math.sin(x * 0.08) * 2;
-    underlinePoints.push({ x: 220 + x, y: 162 + wobble, pressure: 0.8 });
+    underlinePoints.push({ x: 220 + x, y: 148 + wobble, pressure: 0.8 });
   }
   strokes.push({
     id: `stroke_ul_${now}_2`,
@@ -140,17 +233,29 @@ export function parseOrGenerateThoughtCanvas(
     bounds: calculateStrokeBounds(underlinePoints),
   });
 
-  // 4. Conceptual sketch diagram: Central node + radiated sub-ideas
+  // 6. Connector arrow linking ideas
+  connectors.push({
+    id: `connector_${now}`,
+    from: { x: 380, y: 260 },
+    to: { x: 590, y: 230 },
+    label: 'feeds into',
+    color: colors.accent,
+    width: 2,
+    style: 'curved',
+    arrowHead: 'end',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 7. Conceptual node clusters
   const nodeCenters = [
-    { x: 300, y: 240, label: 'Core Insight' },
-    { x: 480, y: 220, label: 'Convergence' },
-    { x: 390, y: 350, label: 'Future Horizon' },
+    { x: 300, y: 260, label: 'Core Insight' },
+    { x: 490, y: 350, label: 'Horizon' },
   ];
 
   nodeCenters.forEach((n, idx) => {
-    // Circle stroke
     const circlePoints: { x: number; y: number; pressure: number }[] = [];
-    const rad = 36;
+    const rad = 34;
     for (let a = 0; a <= Math.PI * 2 + 0.3; a += 0.2) {
       const wobble = (Math.random() - 0.5) * 2;
       circlePoints.push({
@@ -171,8 +276,8 @@ export function parseOrGenerateThoughtCanvas(
 
     canvasTexts.push({
       id: `text_node_${idx}_${now}`,
-      x: n.x - 30,
-      y: n.y - 10,
+      x: n.x - 28,
+      y: n.y - 8,
       text: n.label,
       color: colors.stroke,
       fontSize: 14,
@@ -181,58 +286,13 @@ export function parseOrGenerateThoughtCanvas(
     });
   });
 
-  // 5. Connective living ink branches
-  const branch1: { x: number; y: number; pressure: number }[] = [];
-  for (let t = 0; t <= 1; t += 0.05) {
-    const bx = (1 - t) * 336 + t * 444;
-    const by = (1 - t) * 240 + t * 220 + Math.sin(t * Math.PI) * -16;
-    branch1.push({ x: bx, y: by, pressure: 0.7 });
-  }
-  strokes.push({
-    id: `stroke_branch_1_${now}`,
-    points: branch1,
-    color: '#64748B',
-    width: 2,
-    tool: 'pen',
-    timestamp: now,
-    bounds: calculateStrokeBounds(branch1),
-  });
-
-  const branch2: { x: number; y: number; pressure: number }[] = [];
-  for (let t = 0; t <= 1; t += 0.05) {
-    const bx = (1 - t) * 300 + t * 390;
-    const by = (1 - t) * 276 + t * 320 + Math.sin(t * Math.PI) * 12;
-    branch2.push({ x: bx, y: by, pressure: 0.7 });
-  }
-  strokes.push({
-    id: `stroke_branch_2_${now}`,
-    points: branch2,
-    color: '#64748B',
-    width: 2,
-    tool: 'pen',
-    timestamp: now,
-    bounds: calculateStrokeBounds(branch2),
-  });
-
-  const branch3: { x: number; y: number; pressure: number }[] = [];
-  for (let t = 0; t <= 1; t += 0.05) {
-    const bx = (1 - t) * 480 + t * 410;
-    const by = (1 - t) * 256 + t * 330 + Math.sin(t * Math.PI) * 14;
-    branch3.push({ x: bx, y: by, pressure: 0.7 });
-  }
-  strokes.push({
-    id: `stroke_branch_3_${now}`,
-    points: branch3,
-    color: '#64748B',
-    width: 2,
-    tool: 'pen',
-    timestamp: now,
-    bounds: calculateStrokeBounds(branch3),
-  });
-
   return {
     strokes,
     canvasTexts,
+    shapes,
+    images,
+    checklists,
+    connectors,
     bounds: {
       minX: originX - 40,
       minY: originY - 40,

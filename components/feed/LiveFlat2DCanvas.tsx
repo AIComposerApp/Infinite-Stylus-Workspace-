@@ -139,6 +139,15 @@ export const LiveFlat2DCanvas: React.FC<LiveFlat2DCanvasProps> = ({ thoughts, on
         ctx.bezierCurveTo(midX, fromY, midX, toY, toX, toY);
         ctx.stroke();
 
+        // Terminal anchor pins where connector touches cards
+        ctx.fillStyle = '#64748B';
+        ctx.beginPath();
+        ctx.arc(fromX, fromY, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(toX, toY, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
         // Direction arrow
         const arrowAngle = Math.atan2(toY - (fromY + toY) / 2, toX - midX);
         const arrowLen = 9;
@@ -387,20 +396,32 @@ export const LiveFlat2DCanvas: React.FC<LiveFlat2DCanvasProps> = ({ thoughts, on
                 </p>
               </div>
 
-              {/* Footer Author & Ink indicator */}
-              <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[10px] text-neutral-500 font-mono">
-                <span className="tracking-wide">
-                  anon_{t.authorAnonymousId ? t.authorAnonymousId.slice(0, 5) : 'creator'}
+              {/* Card visual anchor nodes for incoming/outgoing curves */}
+              <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-400 border-2 border-white shadow-xs pointer-events-none" />
+              <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-400 border-2 border-white shadow-xs pointer-events-none" />
+
+              {/* Footer Author & Interaction indicator */}
+              <div className="flex items-center justify-between pt-1.5 border-t border-neutral-100 text-[11px] text-neutral-600">
+                <span className="font-semibold text-neutral-800 truncate max-w-[120px]">
+                  {t.authorName || (t.authorAnonymousId ? t.authorAnonymousId.replace(/_/g, ' ') : 'Anonymous')}
                 </span>
-                <span>{t.strokesCount || 24} strokes</span>
+                <span className="text-neutral-500 font-medium">
+                  {t.reactionCount || 0} resonated • {t.remixCount || 0} remixes
+                </span>
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Floating Gesture Guide & Zoom Controls (Bottom Left) */}
-      <div className="absolute bottom-6 left-4 sm:left-6 z-20 flex items-center gap-1.5 p-1 bg-white/95 rounded-2xl border border-neutral-200/90 shadow-md backdrop-blur-md pointer-events-auto">
+      {/* Subtle Legend for Flowchart Connections (Bottom Left) */}
+      <div className="absolute bottom-6 left-4 sm:left-6 z-20 hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/90 rounded-full border border-neutral-200/80 shadow-xs text-xs text-neutral-600 font-medium pointer-events-auto">
+        <span className="w-2 h-2 rounded-full bg-slate-400" />
+        <span>Connected topic flows • Click card to view</span>
+      </div>
+
+      {/* Floating Gesture Guide & Zoom Controls (Standardized to Bottom Right) */}
+      <div className="absolute bottom-6 right-4 sm:right-6 z-20 flex items-center gap-1.5 p-1 bg-white/95 rounded-2xl border border-neutral-200/90 shadow-md backdrop-blur-md pointer-events-auto">
         <div className="hidden sm:flex items-center gap-1 px-2 text-[11px] font-medium text-neutral-500 border-r border-neutral-200">
           <Move className="w-3.5 h-3.5" />
           <span>Pan / Pinch</span>

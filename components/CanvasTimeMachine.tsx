@@ -18,6 +18,7 @@ interface CanvasTimeMachineProps {
   totalSteps: number;
   currentStep: number;
   onStepChange: (step: number | ((prev: number) => number)) => void;
+  activeItemType?: 'stroke' | 'shape' | 'text' | 'image' | 'checklist' | 'connector' | 'thought';
 }
 
 export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
@@ -26,9 +27,10 @@ export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
   totalSteps,
   currentStep,
   onStepChange,
+  activeItemType,
 }) => {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(2); // 1x, 2x, 5x
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(2); // 1x, 2x, 4x
   const [isScrubbing, setIsScrubbing] = useState<boolean>(false);
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -134,6 +136,16 @@ export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
 
   const progressPercent = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
+  const itemTypeLabels: Record<string, string> = {
+    stroke: 'Ink Stroke',
+    shape: 'Shape / Sticky Note',
+    text: 'Handwritten Text',
+    image: 'Imported Image',
+    checklist: 'Checklist Card',
+    connector: 'Flow Connector',
+    thought: 'AI Thought',
+  };
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -148,7 +160,12 @@ export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
         >
           <div className="flex items-center gap-1.5 text-xs font-medium text-neutral-700 shrink-0">
             <History className="w-3.5 h-3.5 text-neutral-500" />
-            <span className="hidden sm:inline">Time Machine</span>
+            <span className="hidden sm:inline font-semibold">Time Machine</span>
+            {activeItemType && (
+              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-100 border border-neutral-200 text-neutral-600 font-sans">
+                {itemTypeLabels[activeItemType] || activeItemType}
+              </span>
+            )}
           </div>
 
           <div className="h-4 w-px bg-neutral-200 shrink-0" />
@@ -186,7 +203,7 @@ export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
           </button>
 
           {/* Fluid Drag Scrubber Track (Continuous, Zero-Lag, Back-and-Forth Pointer Capture) */}
-          <div className="flex-1 flex items-center gap-2 min-w-[120px] sm:min-w-[200px]">
+          <div className="flex-1 flex items-center gap-2 min-w-[120px] sm:min-w-[180px]">
             <div
               ref={trackRef}
               onPointerDown={handlePointerDown}
@@ -245,17 +262,24 @@ export const CanvasTimeMachine: React.FC<CanvasTimeMachineProps> = ({
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
-          {/* Speed Selector */}
-          <button
-            type="button"
-            onClick={() => {
-              setPlaybackSpeed((prev) => (prev === 1 ? 2 : prev === 2 ? 5 : 1));
-            }}
-            className="px-2 py-0.5 rounded bg-neutral-100 text-[11px] font-mono text-neutral-700 border border-neutral-200 hover:bg-neutral-200 transition-colors shrink-0 cursor-pointer"
-            title="Change playback speed"
-          >
-            {playbackSpeed}x
-          </button>
+          {/* Speed Modifier Toggles (1x, 2x, 4x) */}
+          <div className="flex items-center p-0.5 rounded-lg bg-neutral-100 border border-neutral-200 shrink-0">
+            {([1, 2, 4] as const).map((spd) => (
+              <button
+                key={spd}
+                type="button"
+                onClick={() => setPlaybackSpeed(spd)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium transition-all cursor-pointer ${
+                  playbackSpeed === spd
+                    ? 'bg-neutral-900 text-white shadow-xs'
+                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-black/5'
+                }`}
+                title={`Play at ${spd}x speed`}
+              >
+                {spd}x
+              </button>
+            ))}
+          </div>
 
           <div className="h-4 w-px bg-neutral-200 shrink-0" />
 

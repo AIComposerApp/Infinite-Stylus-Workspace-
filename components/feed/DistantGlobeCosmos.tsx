@@ -5,17 +5,30 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { SharedThoughtDocument } from '@/lib/thoughtspace-service';
 import { ArrowLeft } from 'lucide-react';
+import { GlobalViewBar, GlobalViewMode } from '@/components/navigation/GlobalViewBar';
 
 interface DistantGlobeCosmosProps {
   thoughts: SharedThoughtDocument[];
   onBackTo2D: () => void;
   onSelectThought: (thought: SharedThoughtDocument) => void;
+  onSwitchView?: (view: GlobalViewMode) => void;
 }
+
+// Category palette mapped directly to 2D Map categories
+const CATEGORY_COLORS: Record<string, { hex: number; css: string }> = {
+  'Engineering': { hex: 0x2563eb, css: '#2563eb' },
+  'Creative Vision': { hex: 0xd97706, css: '#d97706' },
+  'Introspection': { hex: 0x059669, css: '#059669' },
+  'Philosophy & Study': { hex: 0x7c3aed, css: '#7c3aed' },
+  'Ventures & Work': { hex: 0xdc2626, css: '#dc2626' },
+};
+const DEFAULT_COLOR = { hex: 0x4f46e5, css: '#4f46e5' };
 
 export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
   thoughts,
   onBackTo2D,
   onSelectThought,
+  onSwitchView,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -83,8 +96,59 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
       scene.add(new THREE.Line(ringGeo, ringMat));
     }
 
-    // 7. Thought nodes on sphere
+    // Helper: Dynamic Billboard Text Sprite
+    const createBillboardSprite = (title: string, category: string, accentHex: string) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 140;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, 512, 140);
+        // Rounded card background
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+        ctx.beginPath();
+        ctx.roundRect(12, 16, 488, 108, 28);
+        ctx.fill();
+
+        // Accent border
+        ctx.strokeStyle = accentHex;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        // Category Tag
+        ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = accentHex;
+        ctx.textAlign = 'left';
+        ctx.fillText(category.toUpperCase(), 36, 52);
+
+        // Thought Title
+        ctx.font = '700 26px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#171717';
+        const truncated = title.length > 25 ? title.slice(0, 23) + '…' : title;
+        ctx.fillText(truncated, 36, 92);
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      const spriteMat = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.scale.set(4.8, 1.3, 1);
+      return sprite;
+    };
+
+    // 7. Thought nodes on sphere with dynamic billboard text labels
     const nodeMeshes: THREE.Mesh[] = [];
+    const labelSprites: {
+      sprite: THREE.Sprite;
+      nodeMesh: THREE.Mesh;
+      baseScale: { x: number; y: number };
+    }[] = [];
+
     const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle
 
     thoughts.forEach((thought, i) => {
@@ -96,16 +160,10 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
       const py = y * sphereRadius;
       const pz = Math.sin(theta) * radiusAtY * sphereRadius;
 
-      const color =
-        thought.category === 'Engineering'
-          ? 0x2563eb
-          : thought.category === 'Creative Vision'
-          ? 0xd97706
-          : thought.category === 'Introspection'
-          ? 0x059669
-          : 0x7c3aed;
+      const catConfig = CATEGORY_COLORS[thought.category] || DEFAULT_COLOR;
+      const color = catConfig.hex;
 
-      const nodeGeo = new THREE.SphereGeometry(0.6, 16, 16);
+      const nodeGeo = new THREE.SphereGeometry(0.65, 16, 16);
       const nodeMat = new THREE.MeshStandardMaterial({
         color,
         roughness: 0.2,
@@ -117,7 +175,7 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
       scene.add(nodeMesh);
       nodeMeshes.push(nodeMesh);
 
-      const haloGeo = new THREE.RingGeometry(0.75, 0.95, 24);
+      const haloGeo = new THREE.RingGeometry(0.8, 1.05, 24);
       const haloMat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
@@ -128,6 +186,18 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
       haloMesh.position.set(px, py, pz);
       haloMesh.lookAt(0, 0, 0);
       scene.add(haloMesh);
+
+      // Add dynamic billboard text sprite grounded next to the node
+      const sprite = createBillboardSprite(thought.title, thought.category, catConfig.css);
+      const offsetPos = new THREE.Vector3(px, py, pz).normalize().multiplyScalar(sphereRadius + 1.6);
+      sprite.position.copy(offsetPos);
+      scene.add(sprite);
+
+      labelSprites.push({
+        sprite,
+        nodeMesh,
+        baseScale: { x: 4.8, y: 1.3 },
+      });
     });
 
     // Raycast click
@@ -168,6 +238,29 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
       animFrameRef.current = requestAnimationFrame(animate);
       wireGlobe.rotation.y += 0.0012;
       controls.update();
+
+      // Dynamic scaling & fading of billboard labels relative to camera viewpoint
+      const camPosNorm = camera.position.clone().normalize();
+      for (const item of labelSprites) {
+        const nodeDir = item.nodeMesh.position.clone().normalize();
+        const dot = nodeDir.dot(camPosNorm);
+
+        // Fade out smoothly as globe rotates node into the background
+        if (dot > 0.12) {
+          const targetOpacity = Math.min(0.92, (dot - 0.12) * 1.8);
+          item.sprite.material.opacity = targetOpacity;
+          item.sprite.visible = true;
+
+          // Scale smoothly with distance from camera
+          const dist = camera.position.distanceTo(item.nodeMesh.position);
+          const scaleMod = Math.max(0.7, Math.min(1.3, dist / 28));
+          item.sprite.scale.set(item.baseScale.x * scaleMod, item.baseScale.y * scaleMod, 1);
+        } else {
+          item.sprite.material.opacity = 0;
+          item.sprite.visible = false;
+        }
+      }
+
       renderer.render(scene, camera);
     };
     animate();
@@ -184,28 +277,40 @@ export const DistantGlobeCosmos: React.FC<DistantGlobeCosmosProps> = ({
     };
   }, [thoughts, onSelectThought]);
 
+  const handleSwitchGlobalView = (mode: GlobalViewMode) => {
+    if (mode === 'cosmos') return;
+    if (onSwitchView) {
+      onSwitchView(mode);
+    } else if (mode === 'canvas') {
+      window.location.href = '/';
+    } else {
+      onBackTo2D();
+    }
+  };
+
   return (
     <div className="relative w-screen h-screen bg-[#FAF9F6] overflow-hidden select-none">
       {/* 3D WebGL Canvas */}
       <div ref={mountRef} className="absolute inset-0 z-0" />
 
-      {/* Floating Header */}
-      <header className="absolute top-4 inset-x-0 z-20 flex items-center justify-between px-4 sm:px-8 pointer-events-none">
-        <div className="flex items-center gap-2 pointer-events-auto">
-          <button
-            type="button"
-            onClick={onBackTo2D}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md backdrop-blur-md transition-all text-xs font-semibold cursor-pointer active:scale-95"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to 2D Map</span>
-          </button>
-        </div>
+      {/* Unified Global View Switcher: Top Centered Anchor */}
+      <GlobalViewBar
+        activeView="cosmos"
+        onSwitchView={handleSwitchGlobalView}
+      />
 
-        <div className="pointer-events-auto px-4 py-1.5 rounded-2xl bg-white/90 border border-neutral-200/80 shadow-md backdrop-blur-md text-xs font-medium text-neutral-600">
-          Cosmos Globe • Drag to rotate, click node to preview
-        </div>
-      </header>
+      {/* Minimal Top Left: Back Navigation Pill */}
+      <div className="fixed top-3 left-4 z-40 pointer-events-auto">
+        <button
+          type="button"
+          onClick={onBackTo2D}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 text-neutral-800 border border-neutral-200/90 shadow-xs backdrop-blur-md text-xs font-semibold hover:bg-neutral-50 transition-colors cursor-pointer active:scale-95"
+          title="Back to 2D Map"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">2D Map</span>
+        </button>
+      </div>
     </div>
   );
 };
