@@ -56,10 +56,6 @@ import { FeedbackRatingModal } from '@/components/FeedbackRatingModal';
 import { ShareThoughtDumpModal } from '@/components/ShareThoughtDumpModal';
 import { LiveThoughtFeedModal } from '@/components/LiveThoughtFeedModal';
 import { AppNavigationDrawer } from '@/components/AppNavigationDrawer';
-import { CanvasesScreen } from '@/components/shell/CanvasesScreen';
-import { ExploreScreen, ExplorePost } from '@/components/shell/ExploreScreen';
-import { EditorTopBar } from '@/components/shell/EditorTopBar';
-import { AppTabBar } from '@/components/shell/AppTabBar';
 import { publishThoughtDumpToFirestore, SharedThoughtDocument } from '@/lib/thoughtspace-service';
 import { useRouter } from 'next/navigation';
 import { GlobalViewBar, GlobalViewMode } from '@/components/navigation/GlobalViewBar';
@@ -462,14 +458,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
   const [isEditingTopTitle, setIsEditingTopTitle] = useState<boolean>(false);
   const [topTitleInput, setTopTitleInput] = useState<string>('');
 
-  // Mobile App Shell Prototype State
-  const [isEditorOpen, setIsEditorOpen] = useState<boolean>(true);
-  const [activeShellTab, setActiveShellTab] = useState<'canvases' | 'explore'>('canvases');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('light');
-  const [edgeDragX, setEdgeDragX] = useState<number>(0);
-  const [isEdgeDragging, setIsEdgeDragging] = useState<boolean>(false);
-  const edgeStartXRef = useRef<number>(0);
-
   // Phase 1: Anonymous Thought Dump Sharing & Feedback/Rating System
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
@@ -841,73 +829,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
       showToast(`Renamed to "${trimmed}"`);
     },
     [showToast]
-  );
-
-  // Load thought post from Explore screen into canvas
-  const handleOpenExplorePost = useCallback(
-    (post: ExplorePost) => {
-      const newProjId = 'proj-explore-' + Date.now();
-      const P = [
-        [120, 160],
-        [280, 200],
-        [180, 300],
-      ];
-      const newShapes: CanvasShapeItem[] = post.nodes.map((n, i) => {
-        const pt = P[i % P.length];
-        return {
-          id: 'shape-' + Date.now() + '-' + i,
-          type: 'circle',
-          x: pt[0],
-          y: pt[1],
-          width: 130,
-          height: 130,
-          strokeColor: i === 0 ? '#E08A1E' : i === 1 ? '#7B8CB0' : '#7FA08A',
-          strokeWidth: 2,
-          fillColor: 'transparent',
-          text: n,
-          textColor: '#141414',
-          fontSize: 14,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-      });
-
-      const newTexts: CanvasTextItem[] = [
-        {
-          id: 'text-' + Date.now(),
-          text: post.quote,
-          x: 100,
-          y: 420,
-          fontSize: 15,
-          color: '#141414',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ];
-
-      const newProj: ProjectNote = {
-        id: newProjId,
-        title: post.title,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        isPinned: false,
-        strokes: [],
-        thoughts: [],
-        canvasTexts: newTexts,
-        shapes: newShapes,
-        viewport: { x: 0, y: 0, zoom: 1 },
-      };
-
-      setProjects((prev) => {
-        const updated = [newProj, ...prev];
-        saveProjectsToStorage(updated);
-        return updated;
-      });
-      handleSelectProject(newProjId);
-      setIsEditorOpen(true);
-      showToast(`Opened "${post.title}"`);
-    },
-    [handleSelectProject, showToast]
   );
 
   // Undo / Redo
@@ -3718,143 +3639,181 @@ export const InfiniteStylusCanvas: React.FC = () => {
       : 'cursor-crosshair';
 
   return (
-    <div className={`stage-wrapper ${themeMode === 'dark' ? 'dark-shell' : ''}`}>
-      {/* Top Appearance Switcher matching prototype .mode */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 hidden sm:flex items-center gap-0.5 p-0.5 bg-[var(--phone-surface-2)] border border-[var(--phone-border)] rounded-lg backdrop-blur-md shadow-2xs">
+    <div
+      ref={containerRef}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className="relative w-full h-full overflow-hidden bg-[#FAF9F6] touch-none select-none"
+    >
+      {/* Top Notification Toast */}
+      <TopToast message={toastMessage} />
+
+      {/* Top Left: Minimalist Hamburger Menu & Active Note Title */}
+      <div className="fixed top-3 left-3 z-30 flex items-center gap-2 pointer-events-auto">
+        {/* Hamburger Menu Button */}
         <button
           type="button"
-          onClick={() => setThemeMode('light')}
-          className={`h-7 px-3.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer ${
-            themeMode === 'light'
-              ? 'bg-[var(--phone-surface-1)] text-[var(--phone-ink)] shadow-2xs'
-              : 'text-[var(--phone-mute)] hover:text-[var(--phone-ink)]'
-          }`}
-          aria-pressed={themeMode === 'light'}
+          onClick={() => setIsNavDrawerOpen(true)}
+          className="flex items-center justify-center w-9 h-9 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-2xs backdrop-blur-md transition-all active:scale-95 cursor-pointer"
+          aria-label="Open Navigation Menu"
+          title="Menu & Navigation"
         >
-          Light
+          <Menu className="w-4 h-4 text-neutral-700" />
         </button>
-        <button
-          type="button"
-          onClick={() => setThemeMode('dark')}
-          className={`h-7 px-3.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer ${
-            themeMode === 'dark'
-              ? 'bg-[var(--phone-surface-1)] text-[var(--phone-ink)] shadow-2xs'
-              : 'text-[var(--phone-mute)] hover:text-[var(--phone-ink)]'
-          }`}
-          aria-pressed={themeMode === 'dark'}
-        >
-          Dark
-        </button>
+
+        {/* Note Title */}
+        {isEditingTopTitle ? (
+          <div className="flex items-center gap-1 bg-white/95 backdrop-blur-md border border-neutral-200/90 rounded-full px-3 py-1.5 shadow-2xs">
+            <input
+              type="text"
+              value={topTitleInput}
+              autoFocus
+              onChange={(e) => setTopTitleInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleRenameProject(activeProjectId, topTitleInput);
+                  setIsEditingTopTitle(false);
+                } else if (e.key === 'Escape') {
+                  setIsEditingTopTitle(false);
+                }
+              }}
+              onBlur={() => {
+                handleRenameProject(activeProjectId, topTitleInput);
+                setIsEditingTopTitle(false);
+              }}
+              className="text-xs font-medium text-neutral-800 bg-transparent focus:outline-none w-28 sm:w-44"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                handleRenameProject(activeProjectId, topTitleInput);
+                setIsEditingTopTitle(false);
+              }}
+              className="p-0.5 rounded-full bg-neutral-900 text-white hover:bg-black"
+              title="Save note title"
+            >
+              <Check className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setTopTitleInput(activeProject?.title || 'Untitled Note');
+              setIsEditingTopTitle(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 h-9 rounded-full text-xs font-medium bg-white/95 hover:bg-white text-neutral-700 hover:text-neutral-900 border border-neutral-200/90 shadow-2xs backdrop-blur-md transition-all group active:scale-95 cursor-pointer"
+            title="Click to rename this note"
+          >
+            <span className="max-w-[110px] sm:max-w-[180px] truncate" suppressHydrationWarning>
+              {activeProject?.title || 'Untitled Note'}
+            </span>
+            <Edit3 className="w-3 h-3 text-neutral-400 group-hover:text-neutral-700 transition-colors shrink-0" />
+          </button>
+        )}
       </div>
 
-      {/* Main Mobile App Shell (.phone-shell) */}
-      <div className="phone-shell" id="ph">
-        {/* Top Notification Toast */}
-        <TopToast message={toastMessage} />
-
-        {/* Canvases Screen (Library) */}
-        <CanvasesScreen
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSelectProject={(id) => {
-            handleSelectProject(id);
-            setIsEditorOpen(true);
+      {/* Global View Bar across all interfaces: Canvas | 2D Map | Reel | Cosmos */}
+      {!isTimeMachineOpen && (
+        <GlobalViewBar
+          activeView="canvas"
+          onSwitchView={(mode) => {
+            if (mode === 'canvas') return;
+            router.push(`/feed?mode=${mode}`);
           }}
-          onNewProject={() => {
-            handleNewProject();
-            setIsEditorOpen(true);
+        />
+      )}
+
+      {/* Top Right: Streamlined Essential Controls */}
+      <div className="fixed top-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-white/95 hover:bg-white backdrop-blur-md border border-neutral-200/90 shadow-2xs pointer-events-auto transition-all">
+        {/* Mode Toggle (Draw vs Move) */}
+        <button
+          type="button"
+          onClick={() => {
+            if (isPenTool) {
+              setCurrentTool('pan');
+              showToast('Switched to Move mode');
+            } else {
+              setCurrentTool('pen');
+              showToast('Switched to Drawing mode');
+            }
           }}
-          onPinProject={handlePinProject}
-          onDeleteProject={handleDeleteProject}
-          isOpen={!isEditorOpen && activeShellTab === 'canvases'}
-        />
-
-        {/* Explore Screen (Feed) */}
-        <ExploreScreen
-          isOpen={!isEditorOpen && activeShellTab === 'explore'}
-          onOpenThoughtCanvas={handleOpenExplorePost}
-        />
-
-        {/* Bottom Tab Bar (Visible when Editor is closed) */}
-        <AppTabBar
-          activeTab={activeShellTab}
-          onSelectTab={setActiveShellTab}
-          isVisible={!isEditorOpen}
-        />
-
-        {/* Editor Screen (.scr.ed) */}
-        <div
-          ref={containerRef}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          style={{
-            transform: isEditorOpen
-              ? isEdgeDragging
-                ? `translateX(${edgeDragX}px)`
-                : 'none'
-              : 'translateX(100%)',
-            transition: isEdgeDragging
-              ? 'none'
-              : 'transform 0.45s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s ' + (isEditorOpen ? '0s' : '0.45s'),
-            visibility: isEditorOpen ? 'visible' : 'hidden',
-          }}
-          className="absolute inset-0 z-20 overflow-hidden bg-[var(--phone-paper)] touch-none select-none"
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+            isPenTool
+              ? 'bg-neutral-900 text-white shadow-xs'
+              : 'text-neutral-700 hover:bg-neutral-100'
+          }`}
+          title={isPenTool ? 'Drawing Mode (Click to switch to Move)' : 'Move Mode (Click to switch to Drawing)'}
         >
-          {/* Dot Grid Pattern */}
-          <div className="dotsbg-pattern" />
+          {isPenTool ? (
+            isStylusDetected ? (
+              <ShieldCheck className="w-3.5 h-3.5 text-neutral-200" />
+            ) : (
+              <PenTool className="w-3.5 h-3.5 text-neutral-200" />
+            )
+          ) : (
+            <Hand className="w-3.5 h-3.5 text-neutral-600" />
+          )}
+          <span className="text-[11px] font-medium">{isPenTool ? 'Draw' : 'Move'}</span>
+        </button>
 
-          {/* Left Edge Drag Gesture Detector */}
-          <div
-            id="edge"
-            onPointerDown={(e) => {
-              setIsEdgeDragging(true);
-              edgeStartXRef.current = e.clientX;
-              (e.target as HTMLElement).setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (!isEdgeDragging) return;
-              const dx = Math.max(0, e.clientX - edgeStartXRef.current);
-              setEdgeDragX(dx);
-            }}
-            onPointerUp={() => {
-              if (!isEdgeDragging) return;
-              setIsEdgeDragging(false);
-              if (edgeDragX > 100) {
-                setIsEditorOpen(false);
-              }
-              setEdgeDragX(0);
-            }}
-            onPointerCancel={() => {
-              setIsEdgeDragging(false);
-              setEdgeDragX(0);
-            }}
-            className="absolute left-0 top-0 bottom-0 w-6 z-40 touch-none cursor-ew-resize"
-            title="Swipe right to return to Canvases"
-          />
+        <div className="w-px h-3.5 bg-neutral-200" />
 
-          {/* iOS 18 Compact Top Bar */}
-          <EditorTopBar
-            title={activeProject?.title || 'Idea Stream'}
-            onRenameTitle={(newTitle) => handleRenameProject(activeProjectId, newTitle)}
-            onBack={() => setIsEditorOpen(false)}
-            onShare={() => setIsShareModalOpen(true)}
-            onRedo={handleRedo}
-            canRedo={historyIndex < history.length - 1}
-            onFitToScreen={handleFitToContent}
-            onReplayHistory={() => {
-              setIsTimeMachineOpen((prev) => {
-                if (!prev) setTimeMachineStep(timelineItems.length);
-                return !prev;
-              });
-            }}
-            isMiniMapActive={isMiniRadarVisible}
-            onToggleMiniMap={() => setIsMiniRadarVisible((prev) => !prev)}
-            onOpenGuide={() => setIsGuideOpen(true)}
-            onOpenFeedback={() => {
-              setFeedbackTriggerReason('manual');
-              setIsFeedbackModalOpen(true);
-            }}
-          />
+        {/* Fit to screen */}
+        <button
+          type="button"
+          onClick={handleFitToContent}
+          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 transition-colors cursor-pointer"
+          title="Fit all content to screen"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Time Machine Playback */}
+        <button
+          type="button"
+          onClick={() => {
+            setIsTimeMachineOpen((prev) => {
+              if (!prev) setTimeMachineStep(timelineItems.length);
+              return !prev;
+            });
+          }}
+          className={`p-1.5 rounded-full transition-colors ${
+            isTimeMachineOpen
+              ? 'bg-neutral-900 text-white'
+              : 'text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 cursor-pointer'
+          }`}
+          title="Time Machine Replay (M)"
+        >
+          <History className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Undo */}
+        <button
+          type="button"
+          onClick={handleUndo}
+          disabled={historyIndex <= 0}
+          className={`p-1.5 rounded-full transition-colors ${
+            historyIndex > 0 ? 'text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 cursor-pointer' : 'text-neutral-300 cursor-not-allowed'
+          }`}
+          title="Undo (Ctrl+Z)"
+        >
+          <Undo2 className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Redo */}
+        <button
+          type="button"
+          onClick={handleRedo}
+          disabled={historyIndex >= history.length - 1}
+          className={`p-1.5 rounded-full transition-colors ${
+            historyIndex < history.length - 1 ? 'text-neutral-600 hover:text-neutral-950 hover:bg-neutral-100 cursor-pointer' : 'text-neutral-300 cursor-not-allowed'
+          }`}
+          title="Redo (Ctrl+Y)"
+        >
+          <Redo2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
 
       {/* Infinite Canvas */}
       <canvas
@@ -4050,10 +4009,7 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onChangeStrokeWidth={setStrokeWidth}
         onSave={handleSaveProject}
         isSaving={isSaving}
-        onOpenProjects={() => {
-          setIsEditorOpen(false);
-          setActiveShellTab('canvases');
-        }}
+        onOpenProjects={() => setIsDrawerOpen(true)}
         onNewProject={handleNewProject}
         onUndo={handleUndo}
         onRedo={handleRedo}
@@ -4148,11 +4104,6 @@ export const InfiniteStylusCanvas: React.FC = () => {
         onRenameProject={handleRenameProject}
         onNotify={showToast}
       />
-        </div>
-
-        {/* iOS Home Indicator */}
-        <div className="ios-home-indicator" />
-      </div>
     </div>
   );
 };
